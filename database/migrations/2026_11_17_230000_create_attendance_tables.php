@@ -15,7 +15,7 @@ return new class extends Migration
             $table->string('department')->nullable();
             $table->string('position')->nullable();
             $table->text('notes')->nullable();
-            $table->json('custom_ref_slots')->nullable();
+            $table->longText('custom_ref_slots')->nullable();
             $table->boolean('active')->default(true);
             $table->timestamps();
         });
@@ -23,7 +23,7 @@ return new class extends Migration
         Schema::create('import_batches', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->json('filenames');
+            $table->longText('filenames');
             $table->string('source_type', 32)->default('csv');
             $table->unsignedInteger('total_rows')->default(0);
             $table->unsignedInteger('inserted_events')->default(0);
@@ -56,7 +56,7 @@ return new class extends Migration
             $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
             $table->string('biotime_id', 64)->index();
             $table->date('work_date')->index();
-            $table->json('slots');
+            $table->longText('slots');
             $table->string('reason')->nullable();
             $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
@@ -71,9 +71,9 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->date('work_date')->index();
             $table->string('action', 32); // 'save' or 'reset'
-            $table->json('previous_slots')->nullable();
-            $table->json('new_slots')->nullable();
-            $table->json('original_events')->nullable();
+            $table->longText('previous_slots')->nullable();
+            $table->longText('new_slots')->nullable();
+            $table->longText('original_events')->nullable();
             $table->string('reason')->nullable();
             $table->timestamps();
         });
