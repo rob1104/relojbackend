@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'biotime' => [
+        'url' => rtrim(env('BIOTIME_API_URL', 'http://relojesingenieria.myftp.biz:8088'), '/'),
+        'username' => env('BIOTIME_API_USER', 'Ingenieria'),
+        'password' => env('BIOTIME_API_PASSWORD', 'Ingenieria89'),
+    ],
+
 ];

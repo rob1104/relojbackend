@@ -7,6 +7,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionLog;
 use App\Models\AttendanceEvent;
 use App\Models\Employee;
+use App\Models\EmployeeLeave;
 use App\Models\ImportBatch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,14 +18,42 @@ class AttendanceController extends Controller
     public function state(): JsonResponse
     {
         $employees = Employee::withCount(['events', 'corrections'])
-            ->orderBy('name')
+            ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get()
             ->map(fn (Employee $emp) => [
                 'id' => $emp->id,
                 'biotime_id' => $emp->biotime_id,
+                'biotime_pk' => $emp->biotime_pk,
+                'needs_push' => $emp->needs_push,
                 'name' => $emp->name,
+                'first_name' => $emp->first_name ?? '',
+                'last_name' => $emp->last_name ?? '',
+                'nickname' => $emp->nickname ?? '',
+                'card_no' => $emp->card_no ?? '',
+                'device_password' => $emp->device_password ?? '',
                 'department' => $emp->department ?? '',
                 'position' => $emp->position ?? '',
+                'hire_date' => $emp->hire_date?->format('Y-m-d'),
+                'gender' => $emp->gender ?? '',
+                'birthday' => $emp->birthday?->format('Y-m-d'),
+                'emp_type' => $emp->emp_type ?? 1,
+                'verify_mode' => $emp->verify_mode ?? 0,
+                'ssn' => $emp->ssn ?? '',
+                'mobile' => $emp->mobile ?? '',
+                'contact_tel' => $emp->contact_tel ?? '',
+                'email' => $emp->email ?? '',
+                'city' => $emp->city ?? '',
+                'address' => $emp->address ?? '',
+                'enable_att' => (bool) $emp->enable_att,
+                'enable_overtime' => (bool) $emp->enable_overtime,
+                'enable_holiday' => (bool) $emp->enable_holiday,
+                'device_privilege' => $emp->device_privilege ?? 'Empleado',
+                'area' => $emp->area ?? '',
+                'app_status' => $emp->app_status ?? 'Deshabilitar',
+                'fingerprint' => $emp->fingerprint ?? '-',
+                'face' => $emp->face ?? '-',
+                'palm' => $emp->palm ?? '-',
+                'vl_face' => $emp->vl_face ?? '-',
                 'notes' => $emp->notes ?? '',
                 'custom_ref_slots' => $emp->custom_ref_slots,
                 'active' => $emp->active,
@@ -70,15 +99,56 @@ class AttendanceController extends Controller
             ];
         }
 
+        $correctionLogs = AttendanceCorrectionLog::with('user:id,name')
+            ->orderByDesc('created_at')
+            ->limit(1500)
+            ->get()
+            ->map(function (AttendanceCorrectionLog $log) {
+                $wDate = $log->work_date instanceof \DateTimeInterface
+                    ? $log->work_date->format('Y-m-d')
+                    : substr((string) $log->work_date, 0, 10);
+
+                return [
+                    'id' => $log->id,
+                    'biotime_id' => (string) $log->biotime_id,
+                    'work_date' => $wDate,
+                    'action' => $log->action,
+                    'previous_slots' => $log->previous_slots ?? [],
+                    'new_slots' => $log->new_slots ?? [],
+                    'original_events' => $log->original_events ?? [],
+                    'reason' => $log->reason ?? '',
+                    'user_name' => $log->user?->name ?? 'Sistema',
+                    'created_at' => $log->created_at?->toIso8601String(),
+                ];
+            });
+
+        $leaves = EmployeeLeave::orderByDesc('start_date')
+            ->get()
+            ->map(fn (EmployeeLeave $l) => [
+                'id' => $l->id,
+                'biotime_id' => (string) $l->biotime_emp_code,
+                'leave_type' => $l->leave_type,
+                'category_name' => $l->category_name,
+                'imss_folio' => $l->imss_folio ?? '',
+                'incapacity_type' => $l->incapacity_type ?? '',
+                'start_date' => $l->start_date?->format('Y-m-d'),
+                'end_date' => $l->end_date?->format('Y-m-d'),
+                'days_count' => (float) $l->days_count,
+                'reason' => $l->reason ?? '',
+            ]);
+
         return response()->json([
             'employees' => $employees->values(),
             'events' => $events->values(),
             'corrections' => (object) $corrections,
+            'correction_logs' => $correctionLogs->values(),
+            'leaves' => $leaves->values(),
             'stats' => [
                 'employees_count' => $employees->count(),
                 'events_count' => $events->count(),
                 'imports_count' => ImportBatch::count(),
                 'correction_logs_count' => AttendanceCorrectionLog::count(),
+                'leaves_count' => $leaves->count(),
             ],
         ]);
     }
@@ -226,7 +296,7 @@ class AttendanceController extends Controller
         // Validate chronological order of non-empty slots
         $filled = array_values(array_filter($slots, fn ($s) => $s !== ''));
         for ($i = 1; $i < count($filled); $i++) {
-            if ($filled[$i] <= $filled[$i - 1]) {
+            if ($filled[$i] < $filled[$i - 1]) {
                 return response()->json([
                     'message' => 'Las fechas y horas capturadas deben estar en orden cronológico.',
                 ], 422);
@@ -254,7 +324,7 @@ class AttendanceController extends Controller
             ]
         );
 
-        AttendanceCorrectionLog::create([
+        $logEntry = AttendanceCorrectionLog::create([
             'employee_id' => $emp->id,
             'biotime_id' => $emp->biotime_id,
             'user_id' => $request->user()?->id,
@@ -275,6 +345,18 @@ class AttendanceController extends Controller
                 'updated_by' => $request->user()?->name ?? 'Sistema',
                 'updated_at' => $correction->updated_at?->toIso8601String(),
             ],
+            'log' => [
+                'id' => $logEntry->id,
+                'biotime_id' => (string) $emp->biotime_id,
+                'work_date' => $validated['date'],
+                'action' => 'save',
+                'previous_slots' => $previousSlots ?? [],
+                'new_slots' => $slots,
+                'original_events' => $validated['original_events'] ?? [],
+                'reason' => $validated['reason'] ?? '',
+                'user_name' => $request->user()?->name ?? 'Sistema',
+                'created_at' => $logEntry->created_at?->toIso8601String(),
+            ],
         ]);
     }
 
@@ -293,11 +375,12 @@ class AttendanceController extends Controller
             ->where('work_date', $validated['date'])
             ->first();
 
+        $logPayload = null;
         if ($existing) {
             $prevSlots = $existing->slots;
             $existing->delete();
 
-            AttendanceCorrectionLog::create([
+            $logEntry = AttendanceCorrectionLog::create([
                 'employee_id' => $emp->id,
                 'biotime_id' => $emp->biotime_id,
                 'user_id' => $request->user()?->id,
@@ -308,24 +391,39 @@ class AttendanceController extends Controller
                 'original_events' => $validated['original_events'] ?? [],
                 'reason' => $validated['reason'] ?? 'Restauración a valores originales',
             ]);
+
+            $logPayload = [
+                'id' => $logEntry->id,
+                'biotime_id' => (string) $emp->biotime_id,
+                'work_date' => $validated['date'],
+                'action' => 'reset',
+                'previous_slots' => $prevSlots ?? [],
+                'new_slots' => [],
+                'original_events' => $validated['original_events'] ?? [],
+                'reason' => $validated['reason'] ?? 'Restauración a valores originales',
+                'user_name' => $request->user()?->name ?? 'Sistema',
+                'created_at' => $logEntry->created_at?->toIso8601String(),
+            ];
         }
 
         return response()->json([
             'message' => 'Jornada restaurada a sus marcas originales.',
             'key' => $emp->biotime_id.'|'.$validated['date'],
+            'log' => $logPayload,
         ]);
     }
 
     public function clearAll(Request $request): JsonResponse
     {
         DB::transaction(function () {
+            AttendanceCorrectionLog::query()->delete();
             AttendanceCorrection::query()->delete();
             AttendanceEvent::query()->delete();
             ImportBatch::query()->delete();
         });
 
         return response()->json([
-            'message' => 'Todos los eventos y lotes de importación han sido limpiados.',
+            'message' => 'Datos de asistencia limpiados. El sistema está listo para generar una nueva consulta con BioTime Pro.',
         ]);
     }
 }
