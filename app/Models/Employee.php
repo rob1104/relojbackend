@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Employee extends Model
@@ -18,6 +19,7 @@ class Employee extends Model
         'card_no',
         'device_password',
         'department',
+        'company_id',
         'device_privilege',
         'area',
         'app_status',
@@ -57,6 +59,11 @@ class Employee extends Model
             'hire_date' => 'date:Y-m-d',
             'birthday' => 'date:Y-m-d',
         ];
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     public function events(): HasMany

@@ -482,11 +482,14 @@ class BioTimeSyncController extends Controller
             'emp_code' => ['nullable', 'string', 'max:64'],
             'departments' => ['nullable', 'array'],
             'departments.*' => ['string', 'max:160'],
+            'company_ids' => ['nullable', 'array'],
+            'company_ids.*' => ['integer'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
         $selectedDepts = array_values(array_filter(array_map('trim', $validated['departments'] ?? [])));
         $selectedDeptsLower = array_map('mb_strtolower', $selectedDepts);
+        $selectedCompanyIds = array_values(array_map('intval', array_filter($validated['company_ids'] ?? [])));
 
         $token = $this->bioTime->authenticate();
 
@@ -544,6 +547,7 @@ class BioTimeSyncController extends Controller
             $employeesByBiotime,
             $selectedDepts,
             $selectedDeptsLower,
+            $selectedCompanyIds,
             &$inserted,
             &$duplicates,
             &$touchedBiotimeIds,
@@ -574,6 +578,11 @@ class BioTimeSyncController extends Controller
                 }
 
                 $emp = $employeesByBiotime->get($biotimeId);
+                if (! empty($selectedCompanyIds)) {
+                    if (! $emp || ! in_array((int) $emp->company_id, $selectedCompanyIds, true)) {
+                        continue;
+                    }
+                }
                 if (! empty($selectedDeptsLower)) {
                     $empDept = mb_strtolower(trim((string) ($emp?->department ?? $tx['department'] ?? '')));
                     if ($empDept === '' || ! in_array($empDept, $selectedDeptsLower, true)) {

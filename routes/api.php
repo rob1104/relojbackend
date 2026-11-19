@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BioTimeSyncController;
 use App\Http\Controllers\Api\CatalogController;
+use App\Http\Controllers\Api\CompanyController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\HistoryController;
 use App\Http\Controllers\Api\LeaveController;
@@ -24,6 +25,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/history/corrections', [HistoryController::class, 'correctionLogs']);
     Route::get('/employees', [EmployeeController::class, 'index']);
     Route::get('/catalogs', [CatalogController::class, 'index']);
+    Route::get('/companies', [CompanyController::class, 'index']);
     Route::get('/schedules', [ScheduleController::class, 'index']);
     Route::get('/leaves', [LeaveController::class, 'index']);
 
@@ -52,6 +54,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/catalogs/{type}', [CatalogController::class, 'store']);
         Route::put('/catalogs/{type}/{id}', [CatalogController::class, 'update']);
         Route::delete('/catalogs/{type}/{id}', [CatalogController::class, 'destroy']);
+
+        Route::post('/companies', [CompanyController::class, 'store']);
+        Route::put('/companies/{company}', [CompanyController::class, 'update']);
+        Route::delete('/companies/{company}', [CompanyController::class, 'destroy']);
+        Route::post('/companies/assign-employees', [CompanyController::class, 'assignEmployees']);
 
         // Asignación Visual de Horarios (Empleados y Departamentos) con Sync Bidireccional
         Route::post('/schedules/sync', [ScheduleController::class, 'syncWithBioTime']);

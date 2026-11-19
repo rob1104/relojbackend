@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionLog;
 use App\Models\AttendanceEvent;
+use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
 use App\Models\EmployeeSchedule;
@@ -19,7 +20,8 @@ class AttendanceController extends Controller
 {
     public function state(): JsonResponse
     {
-        $employees = Employee::withCount(['events', 'corrections'])
+        $employees = Employee::with('company:id,business_name,rfc,imss_employer_registration,workplace_address,device_identifier')
+            ->withCount(['events', 'corrections'])
             ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get()
             ->map(fn (Employee $emp) => [
@@ -34,6 +36,15 @@ class AttendanceController extends Controller
                 'card_no' => $emp->card_no ?? '',
                 'device_password' => $emp->device_password ?? '',
                 'department' => $emp->department ?? '',
+                'company_id' => $emp->company_id,
+                'company' => $emp->company ? [
+                    'id' => $emp->company->id,
+                    'business_name' => $emp->company->business_name,
+                    'rfc' => $emp->company->rfc ?? '',
+                    'imss_employer_registration' => $emp->company->imss_employer_registration ?? '',
+                    'workplace_address' => $emp->company->workplace_address ?? '',
+                    'device_identifier' => $emp->company->device_identifier ?? 'Reloj Biométrico BioTime Pro · TimeXis',
+                ] : null,
                 'position' => $emp->position ?? '',
                 'hire_date' => $emp->hire_date?->format('Y-m-d'),
                 'gender' => $emp->gender ?? '',
@@ -183,8 +194,22 @@ class AttendanceController extends Controller
                 'end_date' => $ds->end_date?->format('Y-m-d'),
             ]);
 
+        $companies = Company::where('active', true)
+            ->orderBy('business_name')
+            ->get()
+            ->map(fn (Company $c) => [
+                'id' => $c->id,
+                'business_name' => $c->business_name,
+                'rfc' => $c->rfc ?? '',
+                'imss_employer_registration' => $c->imss_employer_registration ?? '',
+                'workplace_address' => $c->workplace_address ?? '',
+                'device_identifier' => $c->device_identifier ?? 'Reloj Biométrico BioTime Pro · TimeXis',
+                'legal_representative' => $c->legal_representative ?? '',
+            ]);
+
         return response()->json([
             'employees' => $employees->values(),
+            'companies' => $companies->values(),
             'events' => $events->values(),
             'corrections' => (object) $corrections,
             'correction_logs' => $correctionLogs->values(),

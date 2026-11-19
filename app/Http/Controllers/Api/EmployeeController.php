@@ -16,7 +16,8 @@ class EmployeeController extends Controller
 
     public function index(): JsonResponse
     {
-        $employees = Employee::withCount(['events', 'corrections', 'correctionLogs'])
+        $employees = Employee::with('company:id,business_name,rfc,imss_employer_registration,workplace_address,device_identifier')
+            ->withCount(['events', 'corrections', 'correctionLogs'])
             ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get();
 
@@ -38,6 +39,7 @@ class EmployeeController extends Controller
             'card_no' => ['nullable', 'string', 'max:64'],
             'device_password' => ['nullable', 'string', 'max:64'],
             'department' => ['nullable', 'string', 'max:255'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'position' => ['nullable', 'string', 'max:255'],
             'hire_date' => ['nullable', 'date'],
             'gender' => ['nullable', 'string', 'max:16'],

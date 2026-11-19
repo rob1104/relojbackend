@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Area;
 use App\Models\BreakRule;
+use App\Models\Company;
 use App\Models\Department;
 use App\Models\Device;
 use App\Models\Employee;
@@ -36,6 +37,7 @@ class CatalogController extends Controller
         $devices = Device::orderBy('name')->get();
         $timetables = Timetable::orderBy('name')->get();
         $shifts = Shift::orderBy('name')->get();
+        $companies = Company::withCount('employees')->orderBy('business_name')->get();
 
         return response()->json([
             'employees' => $employees,
@@ -46,6 +48,7 @@ class CatalogController extends Controller
             'devices' => $devices,
             'timetables' => $timetables,
             'shifts' => $shifts,
+            'companies' => $companies,
             'counts' => [
                 'employees' => $employees->count(),
                 'areas' => $areas->count(),
@@ -55,6 +58,7 @@ class CatalogController extends Controller
                 'devices' => $devices->count(),
                 'timetables' => $timetables->count(),
                 'shifts' => $shifts->count(),
+                'companies' => $companies->count(),
             ],
         ]);
     }
