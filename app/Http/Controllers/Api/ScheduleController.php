@@ -296,6 +296,13 @@ class ScheduleController extends Controller
             if ($sName === '') {
                 continue;
             }
+            $existingShift = Shift::where('name', $sName)->first();
+            $keepWeekend = array_key_exists('work_weekend', $sh)
+                ? (bool) $sh['work_weekend']
+                : (is_array($existingShift?->weekly_schedule)
+                    ? (bool) (($existingShift->weekly_schedule['sat'] ?? null) || ($existingShift->weekly_schedule['sun'] ?? null))
+                    : (bool) ($existingShift?->work_weekend ?? true));
+
             Shift::updateOrCreate(
                 ['name' => $sName],
                 [
@@ -305,7 +312,7 @@ class ScheduleController extends Controller
                     'unit' => (string) ($sh['cycle_unit'] ?? 'Semana'),
                     'cycle' => (int) ($sh['shift_cycle'] ?? 1),
                     'auto_shift' => ! empty($sh['auto_shift']) ? 'True' : 'False',
-                    'work_weekend' => (bool) ($sh['work_weekend'] ?? true),
+                    'work_weekend' => $keepWeekend,
                 ]
             );
         }

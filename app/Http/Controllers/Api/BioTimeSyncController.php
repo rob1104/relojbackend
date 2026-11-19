@@ -397,6 +397,13 @@ class BioTimeSyncController extends Controller
                 if ($name === '') {
                     continue;
                 }
+                $existingShift = Shift::where('name', $name)->first();
+                $keepWeekend = array_key_exists('work_weekend', $sh)
+                    ? (bool) $sh['work_weekend']
+                    : (is_array($existingShift?->weekly_schedule)
+                        ? (bool) (($existingShift->weekly_schedule['sat'] ?? null) || ($existingShift->weekly_schedule['sun'] ?? null))
+                        : (bool) ($existingShift?->work_weekend ?? true));
+
                 $this->upsertRecord(Shift::class, ['name' => $name], [
                     'biotime_pk' => (int) ($sh['id'] ?? 0) ?: null,
                     'needs_push' => false,
@@ -404,7 +411,7 @@ class BioTimeSyncController extends Controller
                     'unit' => (string) ($sh['cycle_unit'] ?? 'Semana'),
                     'cycle' => (int) ($sh['shift_cycle'] ?? 1),
                     'auto_shift' => ! empty($sh['auto_shift']) ? 'True' : 'False',
-                    'work_weekend' => (bool) ($sh['work_weekend'] ?? true),
+                    'work_weekend' => $keepWeekend,
                 ], $ins, $upd, $dup);
             }
             $results[] = ['catalog_type' => 'shifts', 'catalog_label' => 'Turnos', 'pushed' => $pushedByType['shifts'], 'inserted' => $ins, 'updated' => $upd, 'duplicates' => $dup];
