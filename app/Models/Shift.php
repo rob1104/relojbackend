@@ -15,6 +15,7 @@ class Shift extends Model
         'cycle',
         'auto_shift',
         'work_weekend',
+        'weekly_schedule',
     ];
 
     protected function casts(): array
@@ -22,6 +23,7 @@ class Shift extends Model
         return [
             'needs_push' => 'boolean',
             'work_weekend' => 'boolean',
+            'weekly_schedule' => 'array',
         ];
     }
 }

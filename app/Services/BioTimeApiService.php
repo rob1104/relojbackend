@@ -96,6 +96,7 @@ class BioTimeApiService
             'break_rules' => '/att/api/breaktimes/',
             'timetables' => '/att/api/timeintervals/',
             'shifts' => '/att/api/attshifts/',
+            'holidays' => '/att/api/holidays/',
             'employees' => '/personnel/api/employees/',
             default => throw new \InvalidArgumentException("Catálogo no soportado: {$type}"),
         };
@@ -237,9 +238,23 @@ class BioTimeApiService
             $modeStr = strtolower((string) ($record->type ?? 'normal'));
             $useModeInt = str_contains($modeStr, 'flex') ? 1 : 0;
 
+            $breakIds = is_array($record->break_rule_ids) && count($record->break_rule_ids) > 0
+                ? $record->break_rule_ids
+                : ($record->break_rule_id ? [$record->break_rule_id] : []);
+
+            $breakPks = ($record->break_mode === 'none' || empty($breakIds))
+                ? []
+                : BreakRule::whereIn('id', $breakIds)
+                    ->whereNotNull('biotime_pk')
+                    ->pluck('biotime_pk')
+                    ->map(fn ($v) => (int) $v)
+                    ->values()
+                    ->all();
+
             return [
                 'alias' => (string) $record->name,
                 'use_mode' => $useModeInt,
+                'use_24_mode' => ! empty($record->is_24h) ? 1 : 0,
                 'in_time' => $inHms,
                 'in_ahead_margin' => (int) ($record->in_ahead_margin ?? 0),
                 'in_above_margin' => (int) ($record->in_above_margin ?? 120),
@@ -253,6 +268,15 @@ class BioTimeApiService
                 'out_required' => strtolower((string) ($record->out_required ?? 'si')) === 'no' ? 0 : 1,
                 'allow_late' => (int) ($record->allow_late ?? 0),
                 'allow_leave_early' => (int) ($record->allow_leave_early ?? 0),
+                'early_in' => ($record->early_in_mode ?? 'ignore') === 'count' ? 1 : 0,
+                'min_early_in' => (int) ($record->early_in_minutes ?? 60),
+                'late_out' => ($record->late_out_mode ?? 'ignore') === 'count' ? 1 : 0,
+                'min_late_out' => (int) ($record->late_out_minutes ?? 60),
+                'overtime_lv' => ($record->overtime_level ?? 'ignore') === 'levels' ? 1 : 0,
+                'overtime_lv1' => (float) ($record->overtime_level1_hours ?? 0),
+                'overtime_lv2' => (float) ($record->overtime_level2_hours ?? 0),
+                'overtime_lv3' => (float) ($record->overtime_level3_hours ?? 0),
+                'break_time' => $breakPks,
                 'company' => 1,
             ];
         }
@@ -273,6 +297,31 @@ class BioTimeApiService
                 'work_weekend' => (bool) ($record->work_weekend ?? true),
                 'company' => 1,
             ];
+        }
+
+        if ($type === 'holidays') {
+            $deptPk = null;
+            if (! empty($record->department_name)) {
+                $foundDept = Department::where('name', $record->department_name)
+                    ->orWhere('code', $record->department_name)
+                    ->value('biotime_pk');
+                if ($foundDept) {
+                    $deptPk = (int) $foundDept;
+                }
+            }
+
+            $payload = [
+                'alias' => (string) $record->name,
+                'start_date' => $record->start_date instanceof \DateTimeInterface
+                    ? $record->start_date->format('Y-m-d')
+                    : substr((string) $record->start_date, 0, 10),
+                'duration_day' => (int) ($record->duration_days ?: 1),
+            ];
+            if ($deptPk) {
+                $payload['department'] = $deptPk;
+            }
+
+            return $payload;
         }
 
         if ($type === 'employees') {

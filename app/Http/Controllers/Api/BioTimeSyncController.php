@@ -9,6 +9,7 @@ use App\Models\BreakRule;
 use App\Models\Department;
 use App\Models\Device;
 use App\Models\Employee;
+use App\Models\Holiday;
 use App\Models\ImportBatch;
 use App\Models\Position;
 use App\Models\Shift;
@@ -95,6 +96,7 @@ class BioTimeSyncController extends Controller
         $rawBreaks = $this->bioTime->fetchAllPages($token, '/att/api/breaktimes/', ['page_size' => 200]);
         $rawTimetables = $this->bioTime->fetchAllPages($token, '/att/api/timeintervals/', ['page_size' => 200]);
         $rawShifts = $this->bioTime->fetchAllPages($token, '/att/api/attshifts/', ['page_size' => 200]);
+        $rawHolidays = $this->bioTime->fetchAllPages($token, '/att/api/holidays/', ['page_size' => 200]);
         $rawEmployees = $this->bioTime->fetchAllPages($token, '/personnel/api/employees/', ['page_size' => 300]);
 
         $this->linkRemotePks(Department::class, 'code', $rawDepartments, 'dept_code');
@@ -104,6 +106,7 @@ class BioTimeSyncController extends Controller
         $this->linkRemotePks(BreakRule::class, 'name', $rawBreaks, 'alias');
         $this->linkRemotePks(Timetable::class, 'name', $rawTimetables, 'alias');
         $this->linkRemotePks(Shift::class, 'name', $rawShifts, 'alias');
+        $this->linkRemotePks(Holiday::class, 'name', $rawHolidays, 'alias');
         $this->linkRemotePks(Employee::class, 'biotime_id', $rawEmployees, 'emp_code');
 
         // 2. FASE IDA (PUSH): Enviar registros locales nuevos (biotime_pk IS NULL) o editados (needs_push = true)
@@ -116,6 +119,7 @@ class BioTimeSyncController extends Controller
             'break_rules' => BreakRule::class,
             'timetables' => Timetable::class,
             'shifts' => Shift::class,
+            'holidays' => Holiday::class,
             'devices' => Device::class,
             'employees' => Employee::class,
         ];
@@ -144,6 +148,7 @@ class BioTimeSyncController extends Controller
             $rawBreaks = $this->bioTime->fetchAllPages($token, '/att/api/breaktimes/', ['page_size' => 200]);
             $rawTimetables = $this->bioTime->fetchAllPages($token, '/att/api/timeintervals/', ['page_size' => 200]);
             $rawShifts = $this->bioTime->fetchAllPages($token, '/att/api/attshifts/', ['page_size' => 200]);
+            $rawHolidays = $this->bioTime->fetchAllPages($token, '/att/api/holidays/', ['page_size' => 200]);
             $rawEmployees = $this->bioTime->fetchAllPages($token, '/personnel/api/employees/', ['page_size' => 300]);
         }
 
@@ -189,6 +194,7 @@ class BioTimeSyncController extends Controller
             $rawBreaks,
             $rawTimetables,
             $rawShifts,
+            $rawHolidays,
             $rawEmployees,
             $empCountByDeptCode,
             $empCountByAreaCode,
@@ -345,18 +351,32 @@ class BioTimeSyncController extends Controller
                 $workType = ((int) ($ti['work_type'] ?? 0)) === 1 ? 'Día de Descanso' : 'Trabajo Normal';
                 $existingTt = Timetable::where('name', $name)->first();
                 $remoteBreakMins = (int) ($ti['break_time_duration'] ?? 0);
+                $remoteBreakPks = is_array($ti['break_time'] ?? null) ? $ti['break_time'] : [];
+                $matchedBreakIds = ! empty($remoteBreakPks)
+                    ? BreakRule::whereIn('biotime_pk', $remoteBreakPks)->pluck('id')->map(fn ($v) => (int) $v)->values()->all()
+                    : ($existingTt?->break_rule_ids ?: ($existingTt?->break_rule_id ? [$existingTt->break_rule_id] : []));
+                if (empty($matchedBreakIds) && $remoteBreakMins > 0) {
+                    $autoBr = BreakRule::where('duration_minutes', $remoteBreakMins)->value('id');
+                    if ($autoBr) {
+                        $matchedBreakIds = [(int) $autoBr];
+                    }
+                }
                 $this->upsertRecord(Timetable::class, ['name' => $name], [
                     'biotime_pk' => (int) ($ti['id'] ?? 0) ?: null,
                     'needs_push' => false,
                     'type' => (string) ($ti['use_mode'] ?? 'Normal'),
+                    'is_24h' => ! empty($ti['is_24h']),
                     'check_in' => (string) ($ti['in_time'] ?? '08:00:00'),
                     'check_out' => $outTime,
+                    'cross_day' => (int) ($ti['cross_day'] ?? 0),
                     'in_ahead_margin' => (int) ($ti['in_ahead_margin'] ?? 0),
                     'in_above_margin' => (int) ($ti['in_above_margin'] ?? 120),
                     'out_ahead_margin' => (int) ($ti['out_ahead_margin'] ?? 0),
                     'out_above_margin' => (int) ($ti['out_above_margin'] ?? 120),
                     'work_time_minutes' => (int) ($ti['work_time_duration'] ?? $ti['duration'] ?? 0),
                     'break_minutes' => $remoteBreakMins > 0 ? $remoteBreakMins : (int) ($existingTt?->break_minutes ?? 0),
+                    'break_rule_id' => $matchedBreakIds[0] ?? null,
+                    'break_rule_ids' => $matchedBreakIds,
                     'work_day' => (float) ($ti['work_day'] ?? 1.0),
                     'work_type' => $workType,
                     'in_required' => (string) ($ti['in_required'] ?? 'Si'),
@@ -388,6 +408,29 @@ class BioTimeSyncController extends Controller
                 ], $ins, $upd, $dup);
             }
             $results[] = ['catalog_type' => 'shifts', 'catalog_label' => 'Turnos', 'pushed' => $pushedByType['shifts'], 'inserted' => $ins, 'updated' => $upd, 'duplicates' => $dup];
+            $totalInserted += $ins;
+            $totalUpdated += $upd;
+            $totalDuplicates += $dup;
+
+            // 7b. Días Festivos
+            $ins = $upd = $dup = 0;
+            foreach ($rawHolidays as $hol) {
+                $name = trim((string) ($hol['alias'] ?? $hol['name'] ?? ''));
+                $startDate = substr((string) ($hol['start_date'] ?? ''), 0, 10);
+                if ($name === '' || $startDate === '') {
+                    continue;
+                }
+                $deptName = is_array($hol['department'] ?? null)
+                    ? ($hol['department']['dept_name'] ?? null)
+                    : null;
+                $this->upsertRecord(Holiday::class, ['name' => $name, 'start_date' => $startDate], [
+                    'biotime_pk' => (int) ($hol['id'] ?? 0) ?: null,
+                    'needs_push' => false,
+                    'duration_days' => max(1, (int) ($hol['duration_day'] ?? 1)),
+                    'department_name' => $deptName,
+                ], $ins, $upd, $dup);
+            }
+            $results[] = ['catalog_type' => 'holidays', 'catalog_label' => 'Días Festivos', 'pushed' => $pushedByType['holidays'], 'inserted' => $ins, 'updated' => $upd, 'duplicates' => $dup];
             $totalInserted += $ins;
             $totalUpdated += $upd;
             $totalDuplicates += $dup;

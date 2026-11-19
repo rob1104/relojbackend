@@ -6,12 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionLog;
 use App\Models\AttendanceEvent;
+use App\Models\BreakRule;
 use App\Models\Company;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
 use App\Models\EmployeeSchedule;
 use App\Models\DepartmentSchedule;
+use App\Models\Holiday;
 use App\Models\ImportBatch;
+use App\Models\Shift;
+use App\Models\Timetable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -158,6 +162,7 @@ class AttendanceController extends Controller
                 'id' => $es->id,
                 'employee_id' => $es->employee_id,
                 'biotime_id' => (string) $es->biotime_emp_code,
+                'shift_id' => $es->shift_id,
                 'shift_name' => $es->shift_name,
                 'timetable_name' => $es->timetable_name,
                 'check_in' => $es->check_in,
@@ -179,6 +184,7 @@ class AttendanceController extends Controller
                 'id' => $ds->id,
                 'department_name' => $ds->department_name,
                 'department_code' => $ds->department_code,
+                'shift_id' => $ds->shift_id,
                 'shift_name' => $ds->shift_name,
                 'timetable_name' => $ds->timetable_name,
                 'check_in' => $ds->check_in,
@@ -207,6 +213,56 @@ class AttendanceController extends Controller
                 'legal_representative' => $c->legal_representative ?? '',
             ]);
 
+        $timetablesById = Timetable::all()->keyBy('id');
+        $breakRulesById = BreakRule::all()->keyBy('id');
+        $shiftDailySchedules = [];
+        foreach (Shift::all() as $shift) {
+            if (! is_array($shift->weekly_schedule)) {
+                continue;
+            }
+            $dayMap = [];
+            foreach (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as $dayKey) {
+                $ttId = $shift->weekly_schedule[$dayKey] ?? null;
+                $tt = $ttId ? $timetablesById->get((int) $ttId) : null;
+                if (! $tt) {
+                    $dayMap[$dayKey] = null;
+                    continue;
+                }
+                $checkOutRaw = (string) $tt->check_out;
+                $hasPlusOne = str_contains($checkOutRaw, '+1');
+                $br = $tt->break_rule_id ? $breakRulesById->get($tt->break_rule_id) : null;
+                $bMode = $tt->break_mode ?: 'fixed';
+                $bMins = $bMode === 'none' ? 0 : (int) ($tt->break_minutes ?: ($br?->duration_minutes ?? 60));
+
+                $dayMap[$dayKey] = [
+                    'timetable_name' => $tt->name,
+                    'check_in' => substr((string) $tt->check_in, 0, 5),
+                    'check_out' => substr(str_replace('+1', '', $checkOutRaw), 0, 5).($hasPlusOne ? '+1' : ''),
+                    'break_rule_id' => $br?->id,
+                    'break_rule_name' => $br?->name,
+                    'break_mode' => $bMode,
+                    'break_minutes' => $bMins,
+                    'break_start_time' => ($br && $bMode === 'fixed') ? substr((string) $br->start_time, 0, 5) : null,
+                    'break_end_time' => ($br && $bMode === 'fixed') ? substr((string) $br->end_time, 0, 5) : null,
+                    'auto_deduct_break' => (bool) ($tt->auto_deduct_break ?? false),
+                ];
+            }
+            $shiftDailySchedules[(string) $shift->id] = $dayMap;
+            $shiftDailySchedules[strtolower(trim($shift->name))] = $dayMap;
+        }
+
+        $holidays = Holiday::orderBy('start_date')
+            ->get()
+            ->map(fn (Holiday $h) => [
+                'id' => $h->id,
+                'name' => $h->name,
+                'start_date' => $h->start_date instanceof \DateTimeInterface
+                    ? $h->start_date->format('Y-m-d')
+                    : substr((string) $h->start_date, 0, 10),
+                'duration_days' => (int) ($h->duration_days ?: 1),
+                'department_name' => $h->department_name,
+            ]);
+
         return response()->json([
             'employees' => $employees->values(),
             'companies' => $companies->values(),
@@ -214,8 +270,10 @@ class AttendanceController extends Controller
             'corrections' => (object) $corrections,
             'correction_logs' => $correctionLogs->values(),
             'leaves' => $leaves->values(),
+            'holidays' => $holidays->values(),
             'employee_schedules' => $employeeSchedules->values(),
             'department_schedules' => $departmentSchedules->values(),
+            'shift_daily_schedules' => (object) $shiftDailySchedules,
             'stats' => [
                 'employees_count' => $employees->count(),
                 'events_count' => $events->count(),

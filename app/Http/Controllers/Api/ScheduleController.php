@@ -62,7 +62,9 @@ class ScheduleController extends Controller
                 'timetable' => $s->timetable ?: ($firstTt['name'] ?? $s->name),
                 'unit' => $s->unit ?? 'Semana',
                 'cycle' => (int) ($s->cycle ?? 1),
+                'auto_shift' => in_array($s->auto_shift, [true, 'True', 'true', '1', 1], true),
                 'work_weekend' => (bool) ($s->work_weekend ?? true),
+                'weekly_schedule' => $s->weekly_schedule,
                 'check_in' => $firstTt ? substr((string) $firstTt['check_in'], 0, 5) : '08:00',
                 'check_out' => $firstTt ? str_replace(':00+1', '+1', substr((string) $firstTt['check_out'], 0, 8)) : '17:00',
                 'work_time_minutes' => (int) ($firstTt['work_time_minutes'] ?? 480),
@@ -258,16 +260,30 @@ class ScheduleController extends Controller
             }
             $existingTt = Timetable::where('name', $tName)->first();
             $remoteBreakMins = (int) ($ti['break_time_duration'] ?? 0);
+            $remoteBreakPks = is_array($ti['break_time'] ?? null) ? $ti['break_time'] : [];
+            $matchedBreakIds = ! empty($remoteBreakPks)
+                ? BreakRule::whereIn('biotime_pk', $remoteBreakPks)->pluck('id')->map(fn ($v) => (int) $v)->values()->all()
+                : ($existingTt?->break_rule_ids ?: ($existingTt?->break_rule_id ? [$existingTt->break_rule_id] : []));
+            if (empty($matchedBreakIds) && $remoteBreakMins > 0) {
+                $autoBr = BreakRule::where('duration_minutes', $remoteBreakMins)->value('id');
+                if ($autoBr) {
+                    $matchedBreakIds = [(int) $autoBr];
+                }
+            }
             Timetable::updateOrCreate(
                 ['name' => $tName],
                 [
                     'biotime_pk' => (int) ($ti['id'] ?? 0) ?: null,
                     'needs_push' => false,
                     'type' => (string) ($ti['use_mode'] ?? 'Normal'),
+                    'is_24h' => ! empty($ti['is_24h']),
                     'check_in' => (string) ($ti['in_time'] ?? '08:00:00'),
                     'check_out' => $outTime,
+                    'cross_day' => (int) ($ti['cross_day'] ?? 0),
                     'work_time_minutes' => (int) ($ti['work_time_duration'] ?? $ti['duration'] ?? 0),
                     'break_minutes' => $remoteBreakMins > 0 ? $remoteBreakMins : (int) ($existingTt?->break_minutes ?? 60),
+                    'break_rule_id' => $matchedBreakIds[0] ?? null,
+                    'break_rule_ids' => $matchedBreakIds,
                     'work_day' => (float) ($ti['work_day'] ?? 1.0),
                     'work_type' => ((int) ($ti['work_type'] ?? 0)) === 1 ? 'Día de Descanso' : 'Trabajo Normal',
                 ]
@@ -657,11 +673,14 @@ class ScheduleController extends Controller
 
         $timetable->update([
             'break_rule_id' => $validated['break_mode'] === 'none' ? null : ($br?->id),
+            'break_rule_ids' => $validated['break_mode'] === 'none' ? [] : ($br ? [$br->id] : []),
             'break_mode' => $validated['break_mode'],
             'break_minutes' => $breakMinutes,
             'auto_deduct_break' => (bool) ($validated['auto_deduct_break'] ?? false),
             'needs_push' => true,
         ]);
+
+        $this->bioTime->pushSingleRecord('timetables', $timetable->fresh());
 
         // Propagar a asignaciones activas/vigentes que usen este horario si aún no tienen una regla distinta
         $breakStart = $br && $validated['break_mode'] === 'fixed' ? substr((string) $br->start_time, 0, 5) : null;
@@ -682,6 +701,66 @@ class ScheduleController extends Controller
             'message' => "Regla de comida actualizada para \"{$timetable->name}\" ({$breakMinutes} min · "
                 .($validated['break_mode'] === 'dynamic' ? 'Dinámica' : ($validated['break_mode'] === 'none' ? 'Sin descanso' : 'Horario fijo')).').',
             'timetable' => $timetable->fresh(),
+        ]);
+    }
+
+    public function updateShift(Request $request, Shift $shift): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:191'],
+            'unit' => ['required', 'string', 'max:40'],
+            'cycle' => ['required', 'integer', 'min:1', 'max:366'],
+            'auto_shift' => ['boolean'],
+            'work_weekend' => ['boolean'],
+            'weekly_schedule' => ['nullable', 'array'],
+            'weekly_schedule.sun' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.mon' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.tue' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.wed' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.thu' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.fri' => ['nullable', 'integer', 'exists:timetables,id'],
+            'weekly_schedule.sat' => ['nullable', 'integer', 'exists:timetables,id'],
+        ]);
+
+        $days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        $weekly = [];
+        $ttIds = [];
+        foreach ($days as $d) {
+            $val = $validated['weekly_schedule'][$d] ?? null;
+            $weekly[$d] = $val ? (int) $val : null;
+            if ($val) {
+                $ttIds[] = (int) $val;
+            }
+        }
+
+        $ttNames = Timetable::whereIn('id', array_unique($ttIds))
+            ->pluck('name', 'id');
+
+        $orderedUniqueNames = [];
+        foreach ($days as $d) {
+            $tid = $weekly[$d];
+            if ($tid && $ttNames->has($tid)) {
+                $tName = $ttNames->get($tid);
+                if (! in_array($tName, $orderedUniqueNames, true)) {
+                    $orderedUniqueNames[] = $tName;
+                }
+            }
+        }
+
+        $shift->update([
+            'name' => trim($validated['name']),
+            'unit' => $validated['unit'],
+            'cycle' => (int) $validated['cycle'],
+            'auto_shift' => ! empty($validated['auto_shift']) ? 'True' : 'False',
+            'work_weekend' => (bool) ($validated['work_weekend'] ?? ($weekly['sat'] || $weekly['sun'])),
+            'weekly_schedule' => $weekly,
+            'timetable' => count($orderedUniqueNames) ? implode(',', $orderedUniqueNames) : $shift->timetable,
+            'needs_push' => true,
+        ]);
+
+        return response()->json([
+            'message' => "Turno \"{$shift->name}\" actualizado correctamente.",
+            'shift' => $shift->fresh(),
         ]);
     }
 

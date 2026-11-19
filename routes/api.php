@@ -52,6 +52,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::post('/catalogs/import', [CatalogController::class, 'importCsv']);
         Route::post('/catalogs/{type}', [CatalogController::class, 'store']);
+        Route::post('/catalogs/holidays/seed-lft', [CatalogController::class, 'seedLftHolidays']);
         Route::put('/catalogs/{type}/{id}', [CatalogController::class, 'update']);
         Route::delete('/catalogs/{type}/{id}', [CatalogController::class, 'destroy']);
 
@@ -65,6 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/schedules/assign-employees', [ScheduleController::class, 'assignEmployees']);
         Route::post('/schedules/assign-department', [ScheduleController::class, 'assignDepartment']);
         Route::patch('/schedules/timetables/{timetable}/break', [ScheduleController::class, 'updateTimetableBreak']);
+        Route::put('/schedules/shifts/{shift}', [ScheduleController::class, 'updateShift']);
         Route::delete('/schedules/employee/{employeeSchedule}', [ScheduleController::class, 'destroyEmployeeSchedule']);
 
         // Vacaciones, Incapacidades IMSS y Permisos
