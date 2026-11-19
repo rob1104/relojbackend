@@ -8,6 +8,8 @@ use App\Models\AttendanceCorrectionLog;
 use App\Models\AttendanceEvent;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
+use App\Models\EmployeeSchedule;
+use App\Models\DepartmentSchedule;
 use App\Models\ImportBatch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -63,7 +65,8 @@ class AttendanceController extends Controller
 
         $employeeMap = $employees->keyBy('id');
 
-        $events = AttendanceEvent::orderBy('biotime_id')
+        $events = AttendanceEvent::where('is_visible', true)
+            ->orderBy('biotime_id')
             ->orderBy('event_date')
             ->orderBy('event_time')
             ->get()
@@ -137,12 +140,57 @@ class AttendanceController extends Controller
                 'reason' => $l->reason ?? '',
             ]);
 
+        $employeeSchedules = EmployeeSchedule::orderByDesc('end_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (EmployeeSchedule $es) => [
+                'id' => $es->id,
+                'employee_id' => $es->employee_id,
+                'biotime_id' => (string) $es->biotime_emp_code,
+                'shift_name' => $es->shift_name,
+                'timetable_name' => $es->timetable_name,
+                'check_in' => $es->check_in,
+                'check_out' => $es->check_out,
+                'break_rule_id' => $es->break_rule_id,
+                'break_rule_name' => $es->break_rule_name,
+                'break_mode' => $es->break_mode ?: 'fixed',
+                'break_minutes' => (int) ($es->break_minutes ?? 60),
+                'break_start_time' => $es->break_start_time,
+                'break_end_time' => $es->break_end_time,
+                'auto_deduct_break' => (bool) ($es->auto_deduct_break ?? false),
+                'start_date' => $es->start_date?->format('Y-m-d'),
+                'end_date' => $es->end_date?->format('Y-m-d'),
+            ]);
+
+        $departmentSchedules = DepartmentSchedule::orderByDesc('id')
+            ->get()
+            ->map(fn (DepartmentSchedule $ds) => [
+                'id' => $ds->id,
+                'department_name' => $ds->department_name,
+                'department_code' => $ds->department_code,
+                'shift_name' => $ds->shift_name,
+                'timetable_name' => $ds->timetable_name,
+                'check_in' => $ds->check_in,
+                'check_out' => $ds->check_out,
+                'break_rule_id' => $ds->break_rule_id,
+                'break_rule_name' => $ds->break_rule_name,
+                'break_mode' => $ds->break_mode ?: 'fixed',
+                'break_minutes' => (int) ($ds->break_minutes ?? 60),
+                'break_start_time' => $ds->break_start_time,
+                'break_end_time' => $ds->break_end_time,
+                'auto_deduct_break' => (bool) ($ds->auto_deduct_break ?? false),
+                'start_date' => $ds->start_date?->format('Y-m-d'),
+                'end_date' => $ds->end_date?->format('Y-m-d'),
+            ]);
+
         return response()->json([
             'employees' => $employees->values(),
             'events' => $events->values(),
             'corrections' => (object) $corrections,
             'correction_logs' => $correctionLogs->values(),
             'leaves' => $leaves->values(),
+            'employee_schedules' => $employeeSchedules->values(),
+            'department_schedules' => $departmentSchedules->values(),
             'stats' => [
                 'employees_count' => $employees->count(),
                 'events_count' => $events->count(),
@@ -150,7 +198,7 @@ class AttendanceController extends Controller
                 'correction_logs_count' => AttendanceCorrectionLog::count(),
                 'leaves_count' => $leaves->count(),
             ],
-        ]);
+        ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     }
 
     public function importEvents(Request $request): JsonResponse
@@ -416,14 +464,11 @@ class AttendanceController extends Controller
     public function clearAll(Request $request): JsonResponse
     {
         DB::transaction(function () {
-            AttendanceCorrectionLog::query()->delete();
-            AttendanceCorrection::query()->delete();
-            AttendanceEvent::query()->delete();
-            ImportBatch::query()->delete();
+            AttendanceEvent::where('is_visible', true)->update(['is_visible' => false]);
         });
 
         return response()->json([
-            'message' => 'Datos de asistencia limpiados. El sistema está listo para generar una nueva consulta con BioTime Pro.',
+            'message' => 'Vista limpiada para nueva consulta. Tus lotes anteriores, historial de sincronizaciones, auditoría y correcciones permanecen intactos.',
         ]);
     }
 }

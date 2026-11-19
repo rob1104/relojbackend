@@ -17,12 +17,14 @@ class AttendanceEvent extends Model
         'temperature',
         'mask',
         'data_source',
+        'is_visible',
     ];
 
     protected function casts(): array
     {
         return [
             'event_date' => 'date:Y-m-d',
+            'is_visible' => 'boolean',
         ];
     }
 

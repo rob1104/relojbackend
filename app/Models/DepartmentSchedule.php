@@ -17,6 +17,13 @@ class DepartmentSchedule extends Model
         'timetable_name',
         'check_in',
         'check_out',
+        'break_rule_id',
+        'break_rule_name',
+        'break_mode',
+        'break_minutes',
+        'break_start_time',
+        'break_end_time',
+        'auto_deduct_break',
         'start_date',
         'end_date',
         'employees_assigned_count',
@@ -27,6 +34,7 @@ class DepartmentSchedule extends Model
     protected function casts(): array
     {
         return [
+            'auto_deduct_break' => 'boolean',
             'start_date' => 'date:Y-m-d',
             'end_date' => 'date:Y-m-d',
         ];

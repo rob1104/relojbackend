@@ -19,6 +19,9 @@ class Timetable extends Model
         'out_above_margin',
         'work_time_minutes',
         'break_minutes',
+        'break_rule_id',
+        'break_mode',
+        'auto_deduct_break',
         'work_day',
         'work_type',
         'in_required',
@@ -32,6 +35,7 @@ class Timetable extends Model
         return [
             'work_day' => 'float',
             'needs_push' => 'boolean',
+            'auto_deduct_break' => 'boolean',
         ];
     }
 }

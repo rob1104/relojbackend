@@ -343,6 +343,8 @@ class BioTimeSyncController extends Controller
                     $outTime .= '+1';
                 }
                 $workType = ((int) ($ti['work_type'] ?? 0)) === 1 ? 'Día de Descanso' : 'Trabajo Normal';
+                $existingTt = Timetable::where('name', $name)->first();
+                $remoteBreakMins = (int) ($ti['break_time_duration'] ?? 0);
                 $this->upsertRecord(Timetable::class, ['name' => $name], [
                     'biotime_pk' => (int) ($ti['id'] ?? 0) ?: null,
                     'needs_push' => false,
@@ -354,7 +356,7 @@ class BioTimeSyncController extends Controller
                     'out_ahead_margin' => (int) ($ti['out_ahead_margin'] ?? 0),
                     'out_above_margin' => (int) ($ti['out_above_margin'] ?? 120),
                     'work_time_minutes' => (int) ($ti['work_time_duration'] ?? $ti['duration'] ?? 0),
-                    'break_minutes' => (int) ($ti['break_time_duration'] ?? 0),
+                    'break_minutes' => $remoteBreakMins > 0 ? $remoteBreakMins : (int) ($existingTt?->break_minutes ?? 0),
                     'work_day' => (float) ($ti['work_day'] ?? 1.0),
                     'work_type' => $workType,
                     'in_required' => (string) ($ti['in_required'] ?? 'Si'),
@@ -608,12 +610,15 @@ class BioTimeSyncController extends Controller
                     $employeesByBiotime->put($biotimeId, $emp);
                 }
 
-                $exists = AttendanceEvent::where('employee_id', $emp->id)
+                $existingEvent = AttendanceEvent::where('employee_id', $emp->id)
                     ->where('event_date', $datePart)
                     ->where('event_time', $timePart)
-                    ->exists();
+                    ->first();
 
-                if ($exists) {
+                if ($existingEvent) {
+                    if (! $existingEvent->is_visible) {
+                        $existingEvent->update(['is_visible' => true]);
+                    }
                     $duplicates++;
                 } else {
                     AttendanceEvent::create([
@@ -626,6 +631,7 @@ class BioTimeSyncController extends Controller
                         'temperature' => isset($tx['temperature']) ? (string) $tx['temperature'] : null,
                         'mask' => isset($tx['is_mask']) ? (string) $tx['is_mask'] : null,
                         'data_source' => $tx['terminal_alias'] ?? $tx['terminal_sn'] ?? 'API BioTime',
+                        'is_visible' => true,
                     ]);
                     $inserted++;
                 }

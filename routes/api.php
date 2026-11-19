@@ -41,6 +41,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:Administrador,Recursos Humanos')->group(function () {
         Route::post('/biotime/sync-catalogs', [BioTimeSyncController::class, 'syncCatalogs']);
         Route::delete('/attendance/clear', [AttendanceController::class, 'clearAll']);
+        Route::post('/history/imports/{importBatch}/restore', [HistoryController::class, 'restoreImportBatch']);
         Route::delete('/history/imports/{importBatch}', [HistoryController::class, 'deleteImportBatch']);
 
         Route::post('/employees', [EmployeeController::class, 'store']);
@@ -56,6 +57,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/schedules/sync', [ScheduleController::class, 'syncWithBioTime']);
         Route::post('/schedules/assign-employees', [ScheduleController::class, 'assignEmployees']);
         Route::post('/schedules/assign-department', [ScheduleController::class, 'assignDepartment']);
+        Route::patch('/schedules/timetables/{timetable}/break', [ScheduleController::class, 'updateTimetableBreak']);
         Route::delete('/schedules/employee/{employeeSchedule}', [ScheduleController::class, 'destroyEmployeeSchedule']);
 
         // Vacaciones, Incapacidades IMSS y Permisos

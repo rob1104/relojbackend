@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceCorrectionLog;
+use App\Models\AttendanceEvent;
 use App\Models\ImportBatch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,6 +35,29 @@ class HistoryController extends Controller
 
         return response()->json([
             'batches' => $batches,
+        ]);
+    }
+
+    public function restoreImportBatch(ImportBatch $importBatch): JsonResponse
+    {
+        $restoredByBatch = AttendanceEvent::where('import_batch_id', $importBatch->id)
+            ->update(['is_visible' => true]);
+
+        $restoredByRange = 0;
+        if ($importBatch->date_from && $importBatch->date_to) {
+            $restoredByRange = AttendanceEvent::whereBetween('event_date', [
+                $importBatch->date_from->format('Y-m-d'),
+                $importBatch->date_to->format('Y-m-d'),
+            ])->update(['is_visible' => true]);
+        }
+
+        $totalVisible = AttendanceEvent::where('is_visible', true)->count();
+
+        return response()->json([
+            'message' => "Lote #{$importBatch->id} restaurado en pantalla con todas sus correcciones guardadas ({$totalVisible} marcas activas).",
+            'restored_count' => max($restoredByBatch, $restoredByRange),
+            'date_from' => $importBatch->date_from?->format('Y-m-d'),
+            'date_to' => $importBatch->date_to?->format('Y-m-d'),
         ]);
     }
 

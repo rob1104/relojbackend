@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BreakRule;
 use App\Models\Department;
 use App\Models\DepartmentSchedule;
 use App\Models\Employee;
@@ -22,8 +23,23 @@ class ScheduleController extends Controller
 
     public function index(): JsonResponse
     {
-        $timetables = Timetable::orderBy('name')->get();
-        $ttByName = $timetables->keyBy(fn (Timetable $t) => strtolower(trim($t->name)));
+        $breakRules = BreakRule::orderBy('name')->get();
+        $breakRulesById = $breakRules->keyBy('id');
+
+        $timetables = Timetable::orderBy('name')->get()->map(function (Timetable $t) use ($breakRulesById) {
+            $br = $t->break_rule_id ? $breakRulesById->get($t->break_rule_id) : null;
+            $breakMins = (int) ($t->break_minutes ?: ($br?->duration_minutes ?? 60));
+
+            return array_merge($t->toArray(), [
+                'break_rule_name' => $br?->name,
+                'break_mode' => $t->break_mode ?: 'fixed',
+                'break_minutes' => $breakMins,
+                'break_start_time' => $br ? substr((string) $br->start_time, 0, 5) : null,
+                'break_end_time' => $br ? substr((string) $br->end_time, 0, 5) : null,
+                'auto_deduct_break' => (bool) ($t->auto_deduct_break ?? false),
+            ]);
+        });
+        $ttByName = $timetables->keyBy(fn (array $t) => strtolower(trim((string) $t['name'])));
 
         $shifts = Shift::orderBy('biotime_pk')->orderBy('name')->get()->map(function (Shift $s) use ($ttByName) {
             $ttNames = array_values(array_filter(array_map('trim', explode(',', (string) $s->timetable))));
@@ -42,14 +58,21 @@ class ScheduleController extends Controller
                 'id' => $s->id,
                 'biotime_pk' => $s->biotime_pk,
                 'name' => $s->name,
-                'timetable' => $s->timetable ?: ($firstTt?->name ?? $s->name),
+                'timetable_id' => $firstTt['id'] ?? null,
+                'timetable' => $s->timetable ?: ($firstTt['name'] ?? $s->name),
                 'unit' => $s->unit ?? 'Semana',
                 'cycle' => (int) ($s->cycle ?? 1),
                 'work_weekend' => (bool) ($s->work_weekend ?? true),
-                'check_in' => $firstTt ? substr((string) $firstTt->check_in, 0, 5) : '08:00',
-                'check_out' => $firstTt ? str_replace(':00+1', '+1', substr((string) $firstTt->check_out, 0, 8)) : '17:00',
-                'work_time_minutes' => (int) ($firstTt?->work_time_minutes ?? 480),
-                'break_minutes' => (int) ($firstTt?->break_minutes ?? 60),
+                'check_in' => $firstTt ? substr((string) $firstTt['check_in'], 0, 5) : '08:00',
+                'check_out' => $firstTt ? str_replace(':00+1', '+1', substr((string) $firstTt['check_out'], 0, 8)) : '17:00',
+                'work_time_minutes' => (int) ($firstTt['work_time_minutes'] ?? 480),
+                'break_rule_id' => $firstTt['break_rule_id'] ?? null,
+                'break_rule_name' => $firstTt['break_rule_name'] ?? null,
+                'break_mode' => $firstTt['break_mode'] ?? 'fixed',
+                'break_minutes' => (int) ($firstTt['break_minutes'] ?? 60),
+                'break_start_time' => $firstTt['break_start_time'] ?? null,
+                'break_end_time' => $firstTt['break_end_time'] ?? null,
+                'auto_deduct_break' => (bool) ($firstTt['auto_deduct_break'] ?? false),
             ];
         });
 
@@ -72,6 +95,13 @@ class ScheduleController extends Controller
                 'timetable_name' => $es->timetable_name,
                 'check_in' => $es->check_in,
                 'check_out' => $es->check_out,
+                'break_rule_id' => $es->break_rule_id,
+                'break_rule_name' => $es->break_rule_name,
+                'break_mode' => $es->break_mode ?: 'fixed',
+                'break_minutes' => (int) ($es->break_minutes ?? 60),
+                'break_start_time' => $es->break_start_time,
+                'break_end_time' => $es->break_end_time,
+                'auto_deduct_break' => (bool) ($es->auto_deduct_break ?? false),
                 'start_date' => $es->start_date?->format('Y-m-d'),
                 'end_date' => $es->end_date?->format('Y-m-d'),
                 'assigned_by_dept' => (bool) $es->assigned_by_dept,
@@ -108,6 +138,13 @@ class ScheduleController extends Controller
             'timetable_name' => $ds->timetable_name,
             'check_in' => $ds->check_in,
             'check_out' => $ds->check_out,
+            'break_rule_id' => $ds->break_rule_id,
+            'break_rule_name' => $ds->break_rule_name,
+            'break_mode' => $ds->break_mode ?: 'fixed',
+            'break_minutes' => (int) ($ds->break_minutes ?? 60),
+            'break_start_time' => $ds->break_start_time,
+            'break_end_time' => $ds->break_end_time,
+            'auto_deduct_break' => (bool) ($ds->auto_deduct_break ?? false),
             'start_date' => $ds->start_date?->format('Y-m-d'),
             'end_date' => $ds->end_date?->format('Y-m-d'),
             'employees_assigned_count' => $ds->employees_assigned_count,
@@ -138,6 +175,7 @@ class ScheduleController extends Controller
         return response()->json([
             'shifts' => $shifts->values(),
             'timetables' => $timetables->values(),
+            'break_rules' => $breakRules->values(),
             'departments' => $departments->values(),
             'employees' => $employees->values(),
             'employee_schedules' => $employeeSchedules->values(),
@@ -184,13 +222,86 @@ class ScheduleController extends Controller
             }
         }
 
-        // 2. FASE VUELTA (PULL): Descargar todas las asignaciones de /att/api/attschedules/
+        // 2. FASE VUELTA (PULL): Sincronizar Descansos, Horarios y Turnos desde BioTime Pro
+        $rawBreaks = $this->bioTime->fetchAllPages($token, '/att/api/breaktimes/', ['page_size' => 200]);
+        foreach ($rawBreaks as $b) {
+            $bName = trim((string) ($b['alias'] ?? ''));
+            if ($bName === '') {
+                continue;
+            }
+            $dur = (int) ($b['duration'] ?? 60);
+            BreakRule::updateOrCreate(
+                ['name' => $bName],
+                [
+                    'biotime_pk' => (int) ($b['id'] ?? 0) ?: null,
+                    'needs_push' => false,
+                    'start_time' => (string) ($b['period_start'] ?? '00:00:00'),
+                    'end_time' => (string) ($b['period_end'] ?? '00:00:00'),
+                    'duration_minutes' => $dur,
+                    'end_margin' => (int) ($b['end_margin'] ?? $dur),
+                    'minimum_duration' => (int) ($b['minimum_duration'] ?? $dur),
+                    'multiple_punch' => (int) ($b['multiple_punch'] ?? 1),
+                    'calculation_type' => (string) ($b['calc_type'] ?? 'Checada obligatoria'),
+                ]
+            );
+        }
+
+        $rawTimetables = $this->bioTime->fetchAllPages($token, '/att/api/timeintervals/', ['page_size' => 200]);
+        foreach ($rawTimetables as $ti) {
+            $tName = trim((string) ($ti['alias'] ?? ''));
+            if ($tName === '') {
+                continue;
+            }
+            $outTime = (string) ($ti['out_time'] ?? '18:00:00');
+            if (! empty($ti['cross_day']) && ! str_contains($outTime, '+')) {
+                $outTime .= '+1';
+            }
+            $existingTt = Timetable::where('name', $tName)->first();
+            $remoteBreakMins = (int) ($ti['break_time_duration'] ?? 0);
+            Timetable::updateOrCreate(
+                ['name' => $tName],
+                [
+                    'biotime_pk' => (int) ($ti['id'] ?? 0) ?: null,
+                    'needs_push' => false,
+                    'type' => (string) ($ti['use_mode'] ?? 'Normal'),
+                    'check_in' => (string) ($ti['in_time'] ?? '08:00:00'),
+                    'check_out' => $outTime,
+                    'work_time_minutes' => (int) ($ti['work_time_duration'] ?? $ti['duration'] ?? 0),
+                    'break_minutes' => $remoteBreakMins > 0 ? $remoteBreakMins : (int) ($existingTt?->break_minutes ?? 60),
+                    'work_day' => (float) ($ti['work_day'] ?? 1.0),
+                    'work_type' => ((int) ($ti['work_type'] ?? 0)) === 1 ? 'Día de Descanso' : 'Trabajo Normal',
+                ]
+            );
+        }
+
+        $rawShifts = $this->bioTime->fetchAllPages($token, '/att/api/attshifts/', ['page_size' => 200]);
+        foreach ($rawShifts as $sh) {
+            $sName = trim((string) ($sh['alias'] ?? ''));
+            if ($sName === '') {
+                continue;
+            }
+            Shift::updateOrCreate(
+                ['name' => $sName],
+                [
+                    'biotime_pk' => (int) ($sh['id'] ?? 0) ?: null,
+                    'needs_push' => false,
+                    'timetable' => (string) ($sh['shift_timetable'] ?? ''),
+                    'unit' => (string) ($sh['cycle_unit'] ?? 'Semana'),
+                    'cycle' => (int) ($sh['shift_cycle'] ?? 1),
+                    'auto_shift' => ! empty($sh['auto_shift']) ? 'True' : 'False',
+                    'work_weekend' => (bool) ($sh['work_weekend'] ?? true),
+                ]
+            );
+        }
+
+        // 3. Descargar todas las asignaciones de /att/api/attschedules/
         $remoteSchedules = $this->bioTime->fetchAllPages($token, '/att/api/attschedules/', ['page_size' => 300]);
 
         $employeesByPk = Employee::whereNotNull('biotime_pk')->get()->keyBy('biotime_pk');
         $shiftsByPk = Shift::whereNotNull('biotime_pk')->get()->keyBy('biotime_pk');
         $timetables = Timetable::all();
         $ttByName = $timetables->keyBy(fn (Timetable $t) => strtolower(trim($t->name)));
+        $breakRulesById = BreakRule::all()->keyBy('id');
 
         $inserted = 0;
         $updated = 0;
@@ -202,6 +313,7 @@ class ScheduleController extends Controller
             $employeesByPk,
             $shiftsByPk,
             $ttByName,
+            $breakRulesById,
             &$inserted,
             &$updated,
             &$pruned,
@@ -226,7 +338,7 @@ class ScheduleController extends Controller
                 }
 
                 $shift = $shiftsByPk->get($shiftPk);
-                $shiftMeta = $this->resolveShiftTimes($shift, $ttByName);
+                $shiftMeta = $this->resolveShiftTimes($shift, $ttByName, $breakRulesById);
 
                 $existing = EmployeeSchedule::where('biotime_pk', $remoteId)->first();
                 if (! $existing) {
@@ -237,7 +349,17 @@ class ScheduleController extends Controller
                         ->first();
                 }
 
-                $attrs = [
+                $breakPayload = [
+                    'break_rule_id' => $existing?->break_rule_id ?? $shiftMeta['break_rule_id'],
+                    'break_rule_name' => $existing?->break_rule_name ?? $shiftMeta['break_rule_name'],
+                    'break_mode' => $existing?->break_mode ?: $shiftMeta['break_mode'],
+                    'break_minutes' => $existing ? (int) $existing->break_minutes : $shiftMeta['break_minutes'],
+                    'break_start_time' => $existing?->break_start_time ?? $shiftMeta['break_start_time'],
+                    'break_end_time' => $existing?->break_end_time ?? $shiftMeta['break_end_time'],
+                    'auto_deduct_break' => $existing ? (bool) $existing->auto_deduct_break : $shiftMeta['auto_deduct_break'],
+                ];
+
+                $attrs = array_merge([
                     'biotime_pk' => $remoteId,
                     'needs_push' => false,
                     'employee_id' => $emp->id,
@@ -251,7 +373,7 @@ class ScheduleController extends Controller
                     'check_out' => $shiftMeta['check_out'],
                     'start_date' => $startDate,
                     'end_date' => $endDate,
-                ];
+                ], $breakPayload);
 
                 if ($existing) {
                     $existing->update($attrs);
@@ -261,7 +383,14 @@ class ScheduleController extends Controller
                     $inserted++;
                 }
 
-                $this->updateEmployeeRefSlots($emp, $shiftMeta['check_in'], $shiftMeta['check_out']);
+                $this->updateEmployeeRefSlots(
+                    $emp,
+                    $shiftMeta['check_in'],
+                    $shiftMeta['check_out'],
+                    $breakPayload['break_minutes'],
+                    $breakPayload['break_start_time'],
+                    $breakPayload['break_end_time']
+                );
             }
 
             // Limpiar registros locales que ya fueron eliminados directamente en BioTime Pro
@@ -293,12 +422,20 @@ class ScheduleController extends Controller
             'shift_id' => ['required', 'integer', 'exists:shifts,id'],
             'start_date' => ['required', 'date_format:Y-m-d'],
             'end_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:start_date'],
+            'break_rule_id' => ['nullable', 'integer', 'exists:break_rules,id'],
+            'break_mode' => ['nullable', 'in:fixed,dynamic,none'],
+            'break_minutes' => ['nullable', 'integer', 'min:0', 'max:360'],
+            'break_start_time' => ['nullable', 'string', 'max:8'],
+            'break_end_time' => ['nullable', 'string', 'max:8'],
+            'auto_deduct_break' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
         $shift = Shift::findOrFail($validated['shift_id']);
         $ttByName = Timetable::all()->keyBy(fn (Timetable $t) => strtolower(trim($t->name)));
-        $shiftMeta = $this->resolveShiftTimes($shift, $ttByName);
+        $breakRulesById = BreakRule::all()->keyBy('id');
+        $shiftMeta = $this->resolveShiftTimes($shift, $ttByName, $breakRulesById);
+        $breakConfig = $this->resolveBreakConfig($validated, $shiftMeta, $breakRulesById);
 
         $token = null;
         try {
@@ -320,7 +457,7 @@ class ScheduleController extends Controller
                     'start_date' => $validated['start_date'],
                     'end_date' => $validated['end_date'],
                 ],
-                [
+                array_merge([
                     'biotime_emp_pk' => $emp->biotime_pk,
                     'biotime_emp_code' => (string) $emp->biotime_id,
                     'shift_id' => $shift->id,
@@ -332,10 +469,17 @@ class ScheduleController extends Controller
                     'assigned_by_dept' => false,
                     'notes' => $validated['notes'] ?? null,
                     'needs_push' => true,
-                ]
+                ], $breakConfig)
             );
 
-            $this->updateEmployeeRefSlots($emp, $shiftMeta['check_in'], $shiftMeta['check_out']);
+            $this->updateEmployeeRefSlots(
+                $emp,
+                $shiftMeta['check_in'],
+                $shiftMeta['check_out'],
+                $breakConfig['break_minutes'],
+                $breakConfig['break_start_time'],
+                $breakConfig['break_end_time']
+            );
             $assignedCount++;
 
             if ($token) {
@@ -370,13 +514,21 @@ class ScheduleController extends Controller
             'shift_id' => ['required', 'integer', 'exists:shifts,id'],
             'start_date' => ['required', 'date_format:Y-m-d'],
             'end_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:start_date'],
+            'break_rule_id' => ['nullable', 'integer', 'exists:break_rules,id'],
+            'break_mode' => ['nullable', 'in:fixed,dynamic,none'],
+            'break_minutes' => ['nullable', 'integer', 'min:0', 'max:360'],
+            'break_start_time' => ['nullable', 'string', 'max:8'],
+            'break_end_time' => ['nullable', 'string', 'max:8'],
+            'auto_deduct_break' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
         $dept = Department::findOrFail($validated['department_id']);
         $shift = Shift::findOrFail($validated['shift_id']);
         $ttByName = Timetable::all()->keyBy(fn (Timetable $t) => strtolower(trim($t->name)));
-        $shiftMeta = $this->resolveShiftTimes($shift, $ttByName);
+        $breakRulesById = BreakRule::all()->keyBy('id');
+        $shiftMeta = $this->resolveShiftTimes($shift, $ttByName, $breakRulesById);
+        $breakConfig = $this->resolveBreakConfig($validated, $shiftMeta, $breakRulesById);
 
         $employees = Employee::where('active', true)
             ->where(function ($q) use ($dept) {
@@ -403,7 +555,7 @@ class ScheduleController extends Controller
                     'start_date' => $validated['start_date'],
                     'end_date' => $validated['end_date'],
                 ],
-                [
+                array_merge([
                     'biotime_emp_pk' => $emp->biotime_pk,
                     'biotime_emp_code' => (string) $emp->biotime_id,
                     'shift_id' => $shift->id,
@@ -415,10 +567,17 @@ class ScheduleController extends Controller
                     'assigned_by_dept' => true,
                     'notes' => $validated['notes'] ?? "Asignado por departamento: {$dept->name}",
                     'needs_push' => true,
-                ]
+                ], $breakConfig)
             );
 
-            $this->updateEmployeeRefSlots($emp, $shiftMeta['check_in'], $shiftMeta['check_out']);
+            $this->updateEmployeeRefSlots(
+                $emp,
+                $shiftMeta['check_in'],
+                $shiftMeta['check_out'],
+                $breakConfig['break_minutes'],
+                $breakConfig['break_start_time'],
+                $breakConfig['break_end_time']
+            );
             $assignedCount++;
 
             if ($token) {
@@ -431,7 +590,7 @@ class ScheduleController extends Controller
             }
         }
 
-        DepartmentSchedule::create([
+        DepartmentSchedule::create(array_merge([
             'department_id' => $dept->id,
             'department_code' => $dept->code,
             'department_name' => $dept->name,
@@ -446,7 +605,7 @@ class ScheduleController extends Controller
             'employees_assigned_count' => $assignedCount,
             'synced_count' => $syncedCount,
             'notes' => $validated['notes'] ?? null,
-        ]);
+        ], $breakConfig));
 
         return response()->json([
             'message' => "Horario \"{$shift->name}\" asignado al departamento \"{$dept->name}\" ({$assignedCount} empleados, {$syncedCount} sincronizados con BioTime Pro).",
@@ -482,13 +641,108 @@ class ScheduleController extends Controller
         ]);
     }
 
-    private function resolveShiftTimes(?Shift $shift, $ttByName): array
+    public function updateTimetableBreak(Request $request, Timetable $timetable): JsonResponse
+    {
+        $validated = $request->validate([
+            'break_rule_id' => ['nullable', 'integer', 'exists:break_rules,id'],
+            'break_mode' => ['required', 'in:fixed,dynamic,none'],
+            'break_minutes' => ['required', 'integer', 'min:0', 'max:360'],
+            'auto_deduct_break' => ['boolean'],
+        ]);
+
+        $br = ! empty($validated['break_rule_id']) ? BreakRule::find($validated['break_rule_id']) : null;
+        $breakMinutes = $validated['break_mode'] === 'none'
+            ? 0
+            : (int) ($validated['break_minutes'] ?? ($br?->duration_minutes ?? 60));
+
+        $timetable->update([
+            'break_rule_id' => $validated['break_mode'] === 'none' ? null : ($br?->id),
+            'break_mode' => $validated['break_mode'],
+            'break_minutes' => $breakMinutes,
+            'auto_deduct_break' => (bool) ($validated['auto_deduct_break'] ?? false),
+            'needs_push' => true,
+        ]);
+
+        // Propagar a asignaciones activas/vigentes que usen este horario si aún no tienen una regla distinta
+        $breakStart = $br && $validated['break_mode'] === 'fixed' ? substr((string) $br->start_time, 0, 5) : null;
+        $breakEnd = $br && $validated['break_mode'] === 'fixed' ? substr((string) $br->end_time, 0, 5) : null;
+
+        EmployeeSchedule::where('timetable_name', 'like', "%{$timetable->name}%")
+            ->update([
+                'break_rule_id' => $timetable->break_rule_id,
+                'break_rule_name' => $br?->name,
+                'break_mode' => $timetable->break_mode,
+                'break_minutes' => $breakMinutes,
+                'break_start_time' => $breakStart,
+                'break_end_time' => $breakEnd,
+                'auto_deduct_break' => $timetable->auto_deduct_break,
+            ]);
+
+        return response()->json([
+            'message' => "Regla de comida actualizada para \"{$timetable->name}\" ({$breakMinutes} min · "
+                .($validated['break_mode'] === 'dynamic' ? 'Dinámica' : ($validated['break_mode'] === 'none' ? 'Sin descanso' : 'Horario fijo')).').',
+            'timetable' => $timetable->fresh(),
+        ]);
+    }
+
+    private function resolveBreakConfig(array $validated, array $shiftMeta, $breakRulesById): array
+    {
+        $breakMode = $validated['break_mode'] ?? ($shiftMeta['break_mode'] ?? 'fixed');
+        $breakRuleId = array_key_exists('break_rule_id', $validated)
+            ? $validated['break_rule_id']
+            : ($shiftMeta['break_rule_id'] ?? null);
+        $br = $breakRuleId ? $breakRulesById->get($breakRuleId) : null;
+
+        if ($breakMode === 'none') {
+            return [
+                'break_rule_id' => null,
+                'break_rule_name' => null,
+                'break_mode' => 'none',
+                'break_minutes' => 0,
+                'break_start_time' => null,
+                'break_end_time' => null,
+                'auto_deduct_break' => false,
+            ];
+        }
+
+        $breakMinutes = array_key_exists('break_minutes', $validated) && $validated['break_minutes'] !== null
+            ? (int) $validated['break_minutes']
+            : (int) ($br?->duration_minutes ?? $shiftMeta['break_minutes'] ?? 60);
+
+        $breakStart = $breakMode === 'fixed'
+            ? ($validated['break_start_time'] ?? ($br ? substr((string) $br->start_time, 0, 5) : ($shiftMeta['break_start_time'] ?? null)))
+            : null;
+        $breakEnd = $breakMode === 'fixed'
+            ? ($validated['break_end_time'] ?? ($br ? substr((string) $br->end_time, 0, 5) : ($shiftMeta['break_end_time'] ?? null)))
+            : null;
+
+        return [
+            'break_rule_id' => $br?->id,
+            'break_rule_name' => $br?->name,
+            'break_mode' => $breakMode,
+            'break_minutes' => $breakMinutes,
+            'break_start_time' => $breakStart,
+            'break_end_time' => $breakEnd,
+            'auto_deduct_break' => array_key_exists('auto_deduct_break', $validated)
+                ? (bool) $validated['auto_deduct_break']
+                : (bool) ($shiftMeta['auto_deduct_break'] ?? false),
+        ];
+    }
+
+    private function resolveShiftTimes(?Shift $shift, $ttByName, $breakRulesById = null): array
     {
         if (! $shift) {
             return [
                 'timetable_name' => 'Personalizado',
                 'check_in' => '08:00',
                 'check_out' => '17:00',
+                'break_rule_id' => null,
+                'break_rule_name' => null,
+                'break_mode' => 'fixed',
+                'break_minutes' => 60,
+                'break_start_time' => null,
+                'break_end_time' => null,
+                'auto_deduct_break' => false,
             ];
         }
 
@@ -509,15 +763,36 @@ class ScheduleController extends Controller
         $hasPlusOne = str_contains($checkOutRaw, '+1');
         $checkOut = substr(str_replace('+1', '', $checkOutRaw), 0, 5).($hasPlusOne ? '+1' : '');
 
+        $br = ($firstTt && $firstTt->break_rule_id && $breakRulesById)
+            ? $breakRulesById->get($firstTt->break_rule_id)
+            : null;
+        $breakMode = $firstTt?->break_mode ?: 'fixed';
+        $breakMinutes = $breakMode === 'none'
+            ? 0
+            : (int) ($firstTt?->break_minutes ?: ($br?->duration_minutes ?? 60));
+
         return [
             'timetable_name' => $shift->timetable ?: ($firstTt?->name ?? $shift->name),
             'check_in' => $checkIn,
             'check_out' => $checkOut,
+            'break_rule_id' => $br?->id,
+            'break_rule_name' => $br?->name,
+            'break_mode' => $breakMode,
+            'break_minutes' => $breakMinutes,
+            'break_start_time' => ($br && $breakMode === 'fixed') ? substr((string) $br->start_time, 0, 5) : null,
+            'break_end_time' => ($br && $breakMode === 'fixed') ? substr((string) $br->end_time, 0, 5) : null,
+            'auto_deduct_break' => (bool) ($firstTt?->auto_deduct_break ?? false),
         ];
     }
 
-    private function updateEmployeeRefSlots(Employee $emp, string $checkIn, string $checkOut): void
-    {
+    private function updateEmployeeRefSlots(
+        Employee $emp,
+        string $checkIn,
+        string $checkOut,
+        int $breakMinutes = 60,
+        ?string $breakStartTime = null,
+        ?string $breakEndTime = null
+    ): void {
         $inParts = explode(':', substr($checkIn, 0, 5));
         $outClean = str_replace('+1', '', $checkOut);
         $outParts = explode(':', substr($outClean, 0, 5));
@@ -531,9 +806,29 @@ class ScheduleController extends Controller
             $outMin += 1440;
         }
 
-        $mid = (int) round(($inMin + $outMin) / 2);
+        $bStart = null;
+        $bEnd = null;
+        if ($breakStartTime && $breakEndTime) {
+            $bsParts = explode(':', substr($breakStartTime, 0, 5));
+            $beParts = explode(':', substr($breakEndTime, 0, 5));
+            if (count($bsParts) === 2 && count($beParts) === 2) {
+                $bStart = ((int) $bsParts[0]) * 60 + ((int) $bsParts[1]);
+                $bEnd = ((int) $beParts[0]) * 60 + ((int) $beParts[1]);
+                if ($bEnd <= $bStart) {
+                    $bEnd += 1440;
+                }
+            }
+        }
+
+        if ($bStart === null || $bEnd === null) {
+            $mid = (int) round(($inMin + $outMin) / 2);
+            $half = (int) round(max(0, $breakMinutes) / 2);
+            $bStart = $mid - $half;
+            $bEnd = $mid + $half;
+        }
+
         $emp->updateQuietly([
-            'custom_ref_slots' => [$inMin, $mid - 15, $mid + 15, $outMin],
+            'custom_ref_slots' => [$inMin, $bStart, $bEnd, $outMin],
         ]);
     }
 }
