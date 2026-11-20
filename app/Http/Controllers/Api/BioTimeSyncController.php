@@ -535,6 +535,12 @@ class BioTimeSyncController extends Controller
             'company_ids' => ['nullable', 'array'],
             'company_ids.*' => ['integer'],
             'notes' => ['nullable', 'string', 'max:500'],
+        ], [
+            'date_from.required' => 'Debes seleccionar la fecha "Desde".',
+            'date_from.date_format' => 'La fecha "Desde" no tiene un formato válido (AAAA-MM-DD).',
+            'date_to.required' => 'Debes seleccionar la fecha "Hasta".',
+            'date_to.date_format' => 'La fecha "Hasta" no tiene un formato válido (AAAA-MM-DD).',
+            'date_to.after_or_equal' => 'La fecha "Hasta" debe ser igual o posterior a la fecha "Desde".',
         ]);
 
         $selectedDepts = array_values(array_filter(array_map('trim', $validated['departments'] ?? [])));
