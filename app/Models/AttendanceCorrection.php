@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AttendanceCorrection extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'attendance';
+    protected string $activityModelLabel = 'corrección de asistencia';
     protected $fillable = [
         'employee_id',
         'biotime_id',

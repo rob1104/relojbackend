@@ -15,6 +15,7 @@ use App\Models\Position;
 use App\Models\Shift;
 use App\Models\Timetable;
 use App\Services\BioTimeApiService;
+use App\Support\ActiveCompany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -543,9 +544,12 @@ class BioTimeSyncController extends Controller
             'date_to.after_or_equal' => 'La fecha "Hasta" debe ser igual o posterior a la fecha "Desde".',
         ]);
 
+        $activeCompanyId = ActiveCompany::resolveId($request);
         $selectedDepts = array_values(array_filter(array_map('trim', $validated['departments'] ?? [])));
         $selectedDeptsLower = array_map('mb_strtolower', $selectedDepts);
-        $selectedCompanyIds = array_values(array_map('intval', array_filter($validated['company_ids'] ?? [])));
+        $selectedCompanyIds = $activeCompanyId !== null
+            ? [$activeCompanyId]
+            : array_values(array_map('intval', array_filter($validated['company_ids'] ?? [])));
 
         $token = $this->bioTime->authenticate();
 
@@ -604,6 +608,7 @@ class BioTimeSyncController extends Controller
             $selectedDepts,
             $selectedDeptsLower,
             $selectedCompanyIds,
+            $activeCompanyId,
             &$inserted,
             &$duplicates,
             &$touchedBiotimeIds,
@@ -620,6 +625,7 @@ class BioTimeSyncController extends Controller
 
             $batch = ImportBatch::create([
                 'user_id' => $request->user()?->id,
+                'company_id' => $activeCompanyId ?? (count($selectedCompanyIds) === 1 ? $selectedCompanyIds[0] : null),
                 'filenames' => [$batchLabel],
                 'source_type' => 'api',
                 'total_rows' => count($rawTransactions),
@@ -713,6 +719,20 @@ class BioTimeSyncController extends Controller
 
             return $batch;
         });
+
+        activity('biotime')
+            ->event('sync')
+            ->causedBy($request->user())
+            ->withProperties([
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'inserted' => $inserted,
+                'duplicates' => $duplicates,
+                'total_fetched' => $validRead,
+                'departments' => $selectedDepts,
+                'company_ids' => $selectedCompanyIds,
+            ])
+            ->log("Sincronización BioTime Pro ({$dFromDmy} al {$dToDmy}): {$inserted} nuevas checadas");
 
         return response()->json([
             'message' => "Sincronización API BioTime Pro completada ({$dFromDmy} al {$dToDmy}): {$inserted} checadas nuevas guardadas y {$duplicates} duplicadas omitidas (de {$validRead} leídas en el servidor).",

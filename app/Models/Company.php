@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Company extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'companies';
+    protected string $activityModelLabel = 'empresa / razón social';
     protected $fillable = [
         'business_name',
         'rfc',
@@ -16,12 +21,14 @@ class Company extends Model
         'legal_representative',
         'notes',
         'active',
+        'week_start_day',
     ];
 
     protected function casts(): array
     {
         return [
             'active' => 'boolean',
+            'week_start_day' => 'integer',
         ];
     }
 

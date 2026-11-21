@@ -12,7 +12,8 @@ class UserController extends Controller
 {
     public function index(): JsonResponse
     {
-        $users = User::withCount(['correctionLogs', 'importBatches'])
+        $users = User::with('company:id,business_name,rfc,week_start_day')
+            ->withCount(['correctionLogs', 'importBatches'])
             ->orderByDesc('active')
             ->orderBy('name')
             ->get()
@@ -33,6 +34,7 @@ class UserController extends Controller
             'role' => ['required', 'string', 'max:64'],
             'position' => ['nullable', 'string', 'max:120'],
             'department' => ['nullable', 'string', 'max:120'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'phone' => ['nullable', 'string', 'max:64'],
             'active' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string', 'max:1000'],
@@ -46,11 +48,14 @@ class UserController extends Controller
             'role' => $validated['role'] ?? 'Administrador',
             'position' => $validated['position'] ?? null,
             'department' => $validated['department'] ?? null,
+            'company_id' => $validated['company_id'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'active' => $validated['active'] ?? true,
             'notes' => $validated['notes'] ?? null,
         ]);
 
+        $user->load('company:id,business_name,rfc,week_start_day');
+        $user->load('company:id,business_name,rfc,week_start_day');
         $user->loadCount(['correctionLogs', 'importBatches']);
 
         return response()->json([
@@ -79,6 +84,7 @@ class UserController extends Controller
             'role' => ['required', 'string', 'max:64'],
             'position' => ['nullable', 'string', 'max:120'],
             'department' => ['nullable', 'string', 'max:120'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'phone' => ['nullable', 'string', 'max:64'],
             'active' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string', 'max:1000'],
@@ -100,6 +106,7 @@ class UserController extends Controller
             'role' => $validated['role'],
             'position' => $validated['position'] ?? null,
             'department' => $validated['department'] ?? null,
+            'company_id' => array_key_exists('company_id', $validated) ? ($validated['company_id'] ?: null) : $user->company_id,
             'phone' => $validated['phone'] ?? null,
             'active' => $newActive,
             'notes' => $validated['notes'] ?? null,
@@ -116,6 +123,7 @@ class UserController extends Controller
             $user->tokens()->delete();
         }
 
+        $user->load('company:id,business_name,rfc,week_start_day');
         $user->loadCount(['correctionLogs', 'importBatches']);
 
         return response()->json([
@@ -160,6 +168,13 @@ class UserController extends Controller
             'role' => $u->role ?? 'Administrador',
             'position' => $u->position ?? '',
             'department' => $u->department ?? '',
+            'company_id' => $u->company_id ? (int) $u->company_id : null,
+            'company' => $u->company ? [
+                'id' => $u->company->id,
+                'business_name' => $u->company->business_name,
+                'rfc' => $u->company->rfc ?? '',
+                'week_start_day' => (int) ($u->company->week_start_day ?? 3),
+            ] : null,
             'phone' => $u->phone ?? '',
             'active' => (bool) ($u->active ?? true),
             'last_login_at' => $u->last_login_at?->toIso8601String(),

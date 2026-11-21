@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class BreakRule extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'catalogs';
+    protected string $activityModelLabel = 'regla de descanso';
     protected $fillable = [
         'name',
         'biotime_pk',

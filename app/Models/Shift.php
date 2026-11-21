@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Shift extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'schedules';
+    protected string $activityModelLabel = 'turno';
     protected $fillable = [
         'name',
         'biotime_pk',

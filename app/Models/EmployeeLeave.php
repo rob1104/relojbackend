@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeLeave extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'leaves';
+    protected string $activityModelLabel = 'incidencia / permiso';
     protected $fillable = [
         'biotime_pk',
         'needs_push',

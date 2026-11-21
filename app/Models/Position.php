@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Position extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'catalogs';
+    protected string $activityModelLabel = 'cargo / puesto';
     protected $fillable = [
         'code',
         'biotime_pk',

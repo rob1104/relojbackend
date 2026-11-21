@@ -11,6 +11,7 @@ use App\Models\EmployeeSchedule;
 use App\Models\Shift;
 use App\Models\Timetable;
 use App\Services\BioTimeApiService;
+use App\Support\ActiveCompany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,8 +22,12 @@ class ScheduleController extends Controller
     {
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $activeCompanyId = ActiveCompany::resolveId($request);
+        $scopedEmpIds = $activeCompanyId !== null
+            ? Employee::where('company_id', $activeCompanyId)->pluck('id')->all()
+            : null;
         $breakRules = BreakRule::orderBy('name')->get();
         $breakRulesById = $breakRules->keyBy('id');
 
@@ -79,6 +84,7 @@ class ScheduleController extends Controller
         });
 
         $employeeSchedules = EmployeeSchedule::with('employee:id,biotime_id,name,department,position,area')
+            ->when($scopedEmpIds !== null, fn ($q) => $q->whereIn('employee_id', $scopedEmpIds))
             ->orderByDesc('end_date')
             ->orderByDesc('id')
             ->get()
@@ -113,6 +119,7 @@ class ScheduleController extends Controller
         $latestScheduleByEmp = $employeeSchedules->groupBy('employee_id')->map->first();
 
         $employees = Employee::where('active', true)
+            ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
             ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get()
             ->map(function (Employee $emp) use ($latestScheduleByEmp) {

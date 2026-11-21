@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Holiday extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'holidays';
+    protected string $activityModelLabel = 'día festivo';
     protected $fillable = [
         'biotime_pk',
         'needs_push',

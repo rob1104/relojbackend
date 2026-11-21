@@ -72,10 +72,37 @@ class CompanyController extends Controller
             ? "Se asignaron {$count} empleado(s) a la razón social \"{$company->business_name}\"."
             : "Se desvinculó la razón social de {$count} empleado(s).";
 
+        activity('companies')
+            ->event('assign')
+            ->causedBy($request->user())
+            ->withProperties([
+                'company_id' => $company?->id,
+                'company_name' => $company?->business_name ?? 'Sin empresa',
+                'updated_count' => $count,
+                'employee_ids' => $validated['employee_ids'],
+            ])
+            ->log($msg);
+
         return response()->json([
             'message' => $msg,
             'updated_count' => $count,
             'company' => $company?->loadCount('employees'),
+        ]);
+    }
+
+    public function updateWeekStart(Request $request, Company $company): JsonResponse
+    {
+        $validated = $request->validate([
+            'week_start_day' => ['required', 'integer', 'min:0', 'max:6'],
+        ]);
+
+        $company->update([
+            'week_start_day' => (int) $validated['week_start_day'],
+        ]);
+
+        return response()->json([
+            'message' => "Inicio de semana actualizado para \"{$company->business_name}\".",
+            'company' => $company->fresh()->loadCount('employees'),
         ]);
     }
 
@@ -90,6 +117,7 @@ class CompanyController extends Controller
             'legal_representative' => ['nullable', 'string', 'max:191'],
             'notes' => ['nullable', 'string', 'max:1000'],
             'active' => ['nullable', 'boolean'],
+            'week_start_day' => ['nullable', 'integer', 'min:0', 'max:6'],
         ]);
 
         if (! empty($validated['rfc'])) {

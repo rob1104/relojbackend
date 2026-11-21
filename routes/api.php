@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BioTimeSyncController;
@@ -10,6 +11,7 @@ use App\Http\Controllers\Api\HistoryController;
 use App\Http\Controllers\Api\LeaveController;
 use App\Http\Controllers\Api\ScheduleController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\WeekLockController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
@@ -36,6 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/attendance/import', [AttendanceController::class, 'importEvents']);
         Route::post('/attendance/corrections', [AttendanceController::class, 'saveCorrection']);
         Route::post('/attendance/corrections/reset', [AttendanceController::class, 'resetCorrection']);
+        Route::post('/history/imports/{importBatch}/restore', [HistoryController::class, 'restoreImportBatch']);
     });
 
     // 3. Administración de Personal, Catálogos BioTime y Limpieza / Reversión de Cortes
@@ -43,8 +46,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:Administrador,Recursos Humanos')->group(function () {
         Route::post('/biotime/sync-catalogs', [BioTimeSyncController::class, 'syncCatalogs']);
         Route::delete('/attendance/clear', [AttendanceController::class, 'clearAll']);
-        Route::post('/history/imports/{importBatch}/restore', [HistoryController::class, 'restoreImportBatch']);
-        Route::delete('/history/imports/{importBatch}', [HistoryController::class, 'deleteImportBatch']);
+        Route::post('/attendance/week-locks', [WeekLockController::class, 'store']);
 
         Route::post('/employees', [EmployeeController::class, 'store']);
         Route::put('/employees/{employee}', [EmployeeController::class, 'update']);
@@ -55,11 +57,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/catalogs/holidays/seed-lft', [CatalogController::class, 'seedLftHolidays']);
         Route::put('/catalogs/{type}/{id}', [CatalogController::class, 'update']);
         Route::delete('/catalogs/{type}/{id}', [CatalogController::class, 'destroy']);
-
-        Route::post('/companies', [CompanyController::class, 'store']);
-        Route::put('/companies/{company}', [CompanyController::class, 'update']);
-        Route::delete('/companies/{company}', [CompanyController::class, 'destroy']);
-        Route::post('/companies/assign-employees', [CompanyController::class, 'assignEmployees']);
 
         // Asignación Visual de Horarios (Empleados y Departamentos) con Sync Bidireccional
         Route::post('/schedules/sync', [ScheduleController::class, 'syncWithBioTime']);
@@ -78,6 +75,16 @@ Route::middleware('auth:sanctum')->group(function () {
     // 4. Gestión de Usuarios y Control de Acceso
     // Exclusivo para: Administrador
     Route::middleware('role:Administrador')->group(function () {
+        Route::post('/companies', [CompanyController::class, 'store']);
+        Route::put('/companies/{company}', [CompanyController::class, 'update']);
+        Route::delete('/companies/{company}', [CompanyController::class, 'destroy']);
+        Route::post('/companies/assign-employees', [CompanyController::class, 'assignEmployees']);
+        Route::patch('/companies/{company}/week-start', [CompanyController::class, 'updateWeekStart']);
+        Route::delete('/attendance/week-locks/{weekLock}', [WeekLockController::class, 'destroy']);
+        Route::delete('/history/imports/{importBatch}', [HistoryController::class, 'deleteImportBatch']);
+        Route::get('/activity-logs', [ActivityLogController::class, 'index']);
+        Route::get('/activity-logs/export', [ActivityLogController::class, 'export']);
+        Route::post('/activity-logs/purge', [ActivityLogController::class, 'purge']);
         Route::get('/users', [UserController::class, 'index']);
         Route::post('/users', [UserController::class, 'store']);
         Route::put('/users/{user}', [UserController::class, 'update']);

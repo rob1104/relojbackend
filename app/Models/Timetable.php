@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Timetable extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'schedules';
+    protected string $activityModelLabel = 'horario';
     protected $fillable = [
         'name',
         'biotime_pk',

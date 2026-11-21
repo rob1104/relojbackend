@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Area extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'catalogs';
+    protected string $activityModelLabel = 'área';
     protected $fillable = [
         'code',
         'biotime_pk',

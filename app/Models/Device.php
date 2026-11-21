@@ -2,10 +2,15 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 
 class Device extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'catalogs';
+    protected string $activityModelLabel = 'dispositivo biométrico';
     protected $fillable = [
         'serial_number',
         'biotime_pk',

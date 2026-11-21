@@ -16,15 +16,20 @@ use App\Models\Holiday;
 use App\Models\ImportBatch;
 use App\Models\Shift;
 use App\Models\Timetable;
+use App\Models\WeekLock;
+use App\Support\ActiveCompany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AttendanceController extends Controller
 {
-    public function state(): JsonResponse
+    public function state(Request $request): JsonResponse
     {
-        $employees = Employee::with('company:id,business_name,rfc,imss_employer_registration,workplace_address,device_identifier')
+        $activeCompanyId = ActiveCompany::resolveId($request);
+
+        $employees = Employee::with('company:id,business_name,rfc,imss_employer_registration,workplace_address,device_identifier,week_start_day')
+            ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
             ->withCount(['events', 'corrections'])
             ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get()
@@ -79,31 +84,59 @@ class AttendanceController extends Controller
             ]);
 
         $employeeMap = $employees->keyBy('id');
+        $scopedEmployeeIds = $employees->pluck('id')->all();
+        $scopedBiotimeIds = $employees->pluck('biotime_id')->filter()->values()->all();
+        $userId = $request->user()?->id;
 
-        $events = AttendanceEvent::where('is_visible', true)
-            ->orderBy('biotime_id')
-            ->orderBy('event_date')
-            ->orderBy('event_time')
-            ->get()
-            ->map(function (AttendanceEvent $ev) use ($employeeMap) {
-                $emp = $employeeMap->get($ev->employee_id);
-                $dateStr = $ev->event_date instanceof \DateTimeInterface
-                    ? $ev->event_date->format('Y-m-d')
-                    : substr((string) $ev->event_date, 0, 10);
+        $visibleBatches = ImportBatch::where('user_id', $userId)
+            ->where('is_visible', true)
+            ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
+            ->get(['id', 'date_from', 'date_to']);
 
-                return [
-                    'db_id' => $ev->id,
-                    'id' => (string) $ev->biotime_id,
-                    'name' => $emp['name'] ?? (string) $ev->biotime_id,
-                    'dept' => $emp['department'] ?? '',
-                    'date' => $dateStr,
-                    'time' => substr((string) $ev->event_time, 0, 5),
-                    'import_batch_id' => $ev->import_batch_id,
-                ];
-            });
+        if ($visibleBatches->isEmpty()) {
+            $events = collect([]);
+        } else {
+            $visibleBatchIds = $visibleBatches->pluck('id')->all();
+            $dateRanges = $visibleBatches
+                ->filter(fn ($b) => $b->date_from && $b->date_to)
+                ->map(fn ($b) => [$b->date_from->format('Y-m-d'), $b->date_to->format('Y-m-d')])
+                ->values()
+                ->all();
+
+            $events = AttendanceEvent::where('is_visible', true)
+                ->when($activeCompanyId !== null, fn ($q) => $q->whereIn('employee_id', $scopedEmployeeIds))
+                ->where(function ($q) use ($visibleBatchIds, $dateRanges) {
+                    $q->whereIn('import_batch_id', $visibleBatchIds);
+                    foreach ($dateRanges as [$from, $to]) {
+                        $q->orWhereBetween('event_date', [$from, $to]);
+                    }
+                })
+                ->orderBy('biotime_id')
+                ->orderBy('event_date')
+                ->orderBy('event_time')
+                ->get()
+                ->map(function (AttendanceEvent $ev) use ($employeeMap) {
+                    $emp = $employeeMap->get($ev->employee_id);
+                    $dateStr = $ev->event_date instanceof \DateTimeInterface
+                        ? $ev->event_date->format('Y-m-d')
+                        : substr((string) $ev->event_date, 0, 10);
+
+                    return [
+                        'db_id' => $ev->id,
+                        'id' => (string) $ev->biotime_id,
+                        'name' => $emp['name'] ?? (string) $ev->biotime_id,
+                        'dept' => $emp['department'] ?? '',
+                        'date' => $dateStr,
+                        'time' => substr((string) $ev->event_time, 0, 5),
+                        'import_batch_id' => $ev->import_batch_id,
+                    ];
+                });
+        }
 
         $corrections = [];
-        $correctionRecords = AttendanceCorrection::with('updater:id,name')->get();
+        $correctionRecords = AttendanceCorrection::with('updater:id,name')
+            ->when($activeCompanyId !== null, fn ($q) => $q->whereIn('biotime_id', $scopedBiotimeIds))
+            ->get();
         foreach ($correctionRecords as $corr) {
             $dateStr = $corr->work_date instanceof \DateTimeInterface
                 ? $corr->work_date->format('Y-m-d')
@@ -118,6 +151,7 @@ class AttendanceController extends Controller
         }
 
         $correctionLogs = AttendanceCorrectionLog::with('user:id,name')
+            ->when($activeCompanyId !== null, fn ($q) => $q->whereIn('biotime_id', $scopedBiotimeIds))
             ->orderByDesc('created_at')
             ->limit(1500)
             ->get()
@@ -140,7 +174,9 @@ class AttendanceController extends Controller
                 ];
             });
 
-        $leaves = EmployeeLeave::orderByDesc('start_date')
+        $leaves = EmployeeLeave::query()
+            ->when($activeCompanyId !== null, fn ($q) => $q->whereIn('employee_id', $scopedEmployeeIds))
+            ->orderByDesc('start_date')
             ->get()
             ->map(fn (EmployeeLeave $l) => [
                 'id' => $l->id,
@@ -155,7 +191,9 @@ class AttendanceController extends Controller
                 'reason' => $l->reason ?? '',
             ]);
 
-        $employeeSchedules = EmployeeSchedule::orderByDesc('end_date')
+        $employeeSchedules = EmployeeSchedule::query()
+            ->when($activeCompanyId !== null, fn ($q) => $q->whereIn('employee_id', $scopedEmployeeIds))
+            ->orderByDesc('end_date')
             ->orderByDesc('id')
             ->get()
             ->map(fn (EmployeeSchedule $es) => [
@@ -211,6 +249,7 @@ class AttendanceController extends Controller
                 'workplace_address' => $c->workplace_address ?? '',
                 'device_identifier' => $c->device_identifier ?? 'Reloj Biométrico BioTime Pro · TimeXis',
                 'legal_representative' => $c->legal_representative ?? '',
+                'week_start_day' => (int) ($c->week_start_day ?? 3),
             ]);
 
         $timetablesById = Timetable::all()->keyBy('id');
@@ -263,9 +302,30 @@ class AttendanceController extends Controller
                 'department_name' => $h->department_name,
             ]);
 
+        $weekLocks = WeekLock::with(['company:id,business_name', 'locker:id,name'])
+            ->when(
+                $activeCompanyId !== null,
+                fn ($q) => $q->where(fn ($sq) => $sq->where('company_id', $activeCompanyId)->orWhereNull('company_id'))
+            )
+            ->orderByDesc('week_start')
+            ->get()
+            ->map(fn (WeekLock $l) => [
+                'id' => $l->id,
+                'company_id' => $l->company_id,
+                'company_name' => $l->company?->business_name ?? 'Todas las razones sociales',
+                'week_start' => $l->week_start?->format('Y-m-d'),
+                'week_end' => $l->week_end?->format('Y-m-d'),
+                'locked_by' => $l->locked_by,
+                'locked_by_name' => $l->locker?->name ?? 'Sistema',
+                'locked_at' => $l->locked_at?->toIso8601String(),
+                'notes' => $l->notes ?? '',
+            ]);
+
         return response()->json([
+            'active_company_id' => $activeCompanyId,
             'employees' => $employees->values(),
             'companies' => $companies->values(),
+            'week_locks' => $weekLocks->values(),
             'events' => $events->values(),
             'corrections' => (object) $corrections,
             'correction_logs' => $correctionLogs->values(),
@@ -277,8 +337,10 @@ class AttendanceController extends Controller
             'stats' => [
                 'employees_count' => $employees->count(),
                 'events_count' => $events->count(),
-                'imports_count' => ImportBatch::count(),
-                'correction_logs_count' => AttendanceCorrectionLog::count(),
+                'imports_count' => ImportBatch::when($request->user()?->role !== 'Administrador', fn ($q) => $q->where('user_id', $userId))
+                    ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
+                    ->count(),
+                'correction_logs_count' => $correctionLogs->count(),
                 'leaves_count' => $leaves->count(),
             ],
         ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -436,6 +498,12 @@ class AttendanceController extends Controller
 
         $emp = Employee::where('biotime_id', $validated['biotime_id'])->firstOrFail();
 
+        if ($lock = $this->findWeekLockForDate($validated['date'], $emp->company_id)) {
+            return response()->json([
+                'message' => "La semana del {$lock->week_start?->format('d/m/Y')} al {$lock->week_end?->format('d/m/Y')} está cerrada para nómina. Solo el Administrador puede reabrirla.",
+            ], 423);
+        }
+
         $existing = AttendanceCorrection::where('employee_id', $emp->id)
             ->where('work_date', $validated['date'])
             ->first();
@@ -502,6 +570,12 @@ class AttendanceController extends Controller
 
         $emp = Employee::where('biotime_id', $validated['biotime_id'])->firstOrFail();
 
+        if ($lock = $this->findWeekLockForDate($validated['date'], $emp->company_id)) {
+            return response()->json([
+                'message' => "La semana del {$lock->week_start?->format('d/m/Y')} al {$lock->week_end?->format('d/m/Y')} está cerrada para nómina. Solo el Administrador puede reabrirla.",
+            ], 423);
+        }
+
         $existing = AttendanceCorrection::where('employee_id', $emp->id)
             ->where('work_date', $validated['date'])
             ->first();
@@ -544,10 +618,29 @@ class AttendanceController extends Controller
         ]);
     }
 
+    private function findWeekLockForDate(string $date, ?int $companyId): ?WeekLock
+    {
+        return WeekLock::where('week_start', '<=', $date)
+            ->where('week_end', '>=', $date)
+            ->where(function ($q) use ($companyId) {
+                $q->whereNull('company_id');
+                if ($companyId !== null) {
+                    $q->orWhere('company_id', $companyId);
+                }
+            })
+            ->first();
+    }
+
     public function clearAll(Request $request): JsonResponse
     {
-        DB::transaction(function () {
-            AttendanceEvent::where('is_visible', true)->update(['is_visible' => false]);
+        $userId = $request->user()?->id;
+        $activeCompanyId = ActiveCompany::resolveId($request);
+
+        DB::transaction(function () use ($userId, $activeCompanyId) {
+            ImportBatch::where('user_id', $userId)
+                ->where('is_visible', true)
+                ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
+                ->update(['is_visible' => false]);
         });
 
         return response()->json([

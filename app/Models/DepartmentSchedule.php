@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class DepartmentSchedule extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'schedules';
+    protected string $activityModelLabel = 'horario de departamento';
     protected $fillable = [
         'department_id',
         'department_code',

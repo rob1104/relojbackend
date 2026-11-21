@@ -2,12 +2,17 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Employee extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'employees';
+    protected string $activityModelLabel = 'empleado';
     protected $fillable = [
         'biotime_id',
         'biotime_pk',

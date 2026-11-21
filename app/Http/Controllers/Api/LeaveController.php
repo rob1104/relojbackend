@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\EmployeeLeave;
 use App\Services\BioTimeApiService;
+use App\Support\ActiveCompany;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,11 +18,16 @@ class LeaveController extends Controller
     {
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         $currentYear = now()->year;
+        $activeCompanyId = ActiveCompany::resolveId($request);
+        $scopedEmpIds = $activeCompanyId !== null
+            ? Employee::where('company_id', $activeCompanyId)->pluck('id')->all()
+            : null;
 
         $leaves = EmployeeLeave::with(['employee:id,biotime_id,name,department,position,hire_date', 'creator:id,name'])
+            ->when($scopedEmpIds !== null, fn ($q) => $q->whereIn('employee_id', $scopedEmpIds))
             ->orderByDesc('start_date')
             ->orderByDesc('id')
             ->get()
@@ -30,6 +36,7 @@ class LeaveController extends Controller
         $leavesByEmp = $leaves->groupBy('employee_id');
 
         $balances = Employee::where('active', true)
+            ->when($activeCompanyId !== null, fn ($q) => $q->where('company_id', $activeCompanyId))
             ->orderByRaw('CAST(biotime_id AS UNSIGNED), biotime_id')
             ->get()
             ->map(function (Employee $emp) use ($leavesByEmp, $currentYear) {

@@ -2,11 +2,16 @@
 
 namespace App\Models;
 
+use App\Traits\AuditableActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeSchedule extends Model
 {
+    use AuditableActivity;
+
+    protected string $activityLogName = 'schedules';
+    protected string $activityModelLabel = 'horario de empleado';
     protected $fillable = [
         'biotime_pk',
         'needs_push',
