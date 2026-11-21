@@ -2,13 +2,15 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
-        if (! Schema::hasTable('week_locks')) {
+        $exists = DB::select("SHOW TABLES LIKE 'week_locks'");
+        if (empty($exists)) {
             Schema::create('week_locks', function (Blueprint $table) {
                 $table->id();
                 $table->foreignId('company_id')->nullable()->constrained('companies')->nullOnDelete();
